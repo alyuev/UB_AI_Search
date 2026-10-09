@@ -1,0 +1,18 @@
+{
+  "multilingual-e5-small": {
+    "best_key": "cpu_minus2_10_bs8",
+    "texts_per_sec": 113.13132766201234
+  },
+  "multilingual-e5-base": {
+    "best_key": "cpu_minus2_10_bs8",
+    "texts_per_sec": 44.20227422519718
+  },
+  "bge-m3": {
+    "best_key": "cpu_all12_bs8",
+    "texts_per_sec": 15.183427415010826
+  },
+  "qwen3-embedding-0.6b": {
+    "best_key": "cpu_minus2_10_bs8",
+    "texts_per_sec": 8.698431697674549
+  }
+}

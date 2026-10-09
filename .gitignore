@@ -1,0 +1,39 @@
+# --- environment / caches ---
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# --- build output (scripts/build_dist.py) ---
+dist/
+
+# --- large binaries: downloaded or rebuilt, not source ---
+models/
+tools/llama.cpp/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.epub
+urantia_bilingual_rag.json
+urantia_bilingual_rag.md
+
+# --- personal data of this installation (never commit) ---
+data/secrets.json
+data/settings.json
+data/history.db
+.env
+.env.*
+logs/
+
+# --- editors / OS ---
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# --- text of the book (the Russian translation is copyrighted): never in a public repo ---
+bench/subset.json
+bench/foreword/paper0.json
+bench/translation/dataset.json
+bench/translation/results.json

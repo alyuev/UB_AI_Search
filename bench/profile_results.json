@@ -1,0 +1,190 @@
+{
+  "multilingual-e5-small": {
+    "cpu_all12_bs8": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 2.711864948272705,
+      "texts_per_sec": 110.62497791089558
+    },
+    "cpu_all12_bs16": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 2.8443498611450195,
+      "texts_per_sec": 105.47225715729365
+    },
+    "cpu_all12_bs32": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 3.145930290222168,
+      "texts_per_sec": 95.36129930546356
+    },
+    "cpu_minus2_10_bs8": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 2.651785373687744,
+      "texts_per_sec": 113.13132766201234
+    },
+    "cpu_minus2_10_bs16": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 3.442490816116333,
+      "texts_per_sec": 87.1462019870969
+    },
+    "cpu_minus2_10_bs32": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 3.6780788898468018,
+      "texts_per_sec": 81.5643190329981
+    },
+    "gpu_dml_bs8": {
+      "provider": "DmlExecutionProvider",
+      "seconds": 11.332446575164795,
+      "texts_per_sec": 26.47265954533189
+    },
+    "gpu_dml_bs16": {
+      "provider": "DmlExecutionProvider",
+      "seconds": 7.6209094524383545,
+      "texts_per_sec": 39.36538045390544
+    },
+    "gpu_dml_bs32": {
+      "provider": "DmlExecutionProvider",
+      "seconds": 5.674134016036987,
+      "texts_per_sec": 52.87150411888411
+    }
+  },
+  "multilingual-e5-base": {
+    "cpu_all12_bs8": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 6.874836206436157,
+      "texts_per_sec": 43.63740327647993
+    },
+    "cpu_all12_bs16": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 7.361622095108032,
+      "texts_per_sec": 40.75188811978774
+    },
+    "cpu_all12_bs32": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 8.23325800895691,
+      "texts_per_sec": 36.43758032040681
+    },
+    "cpu_minus2_10_bs8": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 6.786981105804443,
+      "texts_per_sec": 44.20227422519718
+    },
+    "cpu_minus2_10_bs16": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 7.79449462890625,
+      "texts_per_sec": 38.48870443600485
+    },
+    "cpu_minus2_10_bs32": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 9.313345432281494,
+      "texts_per_sec": 32.211840759192036
+    },
+    "gpu_dml_bs8": {
+      "provider": "DmlExecutionProvider",
+      "seconds": 19.094494581222534,
+      "texts_per_sec": 15.711334946514848
+    },
+    "gpu_dml_bs16": {
+      "provider": "DmlExecutionProvider",
+      "seconds": 16.423468351364136,
+      "texts_per_sec": 18.266543557170245
+    },
+    "gpu_dml_bs32": {
+      "provider": "DmlExecutionProvider",
+      "seconds": 14.88008165359497,
+      "texts_per_sec": 20.161179688655885
+    }
+  },
+  "bge-m3": {
+    "cpu_all12_bs8": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 19.758384704589844,
+      "texts_per_sec": 15.183427415010826
+    },
+    "cpu_all12_bs16": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 22.61804699897766,
+      "texts_per_sec": 13.263744655476223
+    },
+    "cpu_all12_bs32": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 27.24260902404785,
+      "texts_per_sec": 11.012161123598007
+    },
+    "cpu_minus2_10_bs8": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 20.189924001693726,
+      "texts_per_sec": 14.858896941604788
+    },
+    "cpu_minus2_10_bs16": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 28.35197377204895,
+      "texts_per_sec": 10.581273896907936
+    },
+    "cpu_minus2_10_bs32": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 32.944570779800415,
+      "texts_per_sec": 9.10620453989771
+    },
+    "gpu_dml_bs8": {
+      "provider": "DmlExecutionProvider",
+      "seconds": 49.25878405570984,
+      "texts_per_sec": 6.090284316817712
+    },
+    "gpu_dml_bs16": {
+      "provider": "DmlExecutionProvider",
+      "seconds": 47.46111869812012,
+      "texts_per_sec": 6.3209635219129945
+    },
+    "gpu_dml_bs32": {
+      "provider": "DmlExecutionProvider",
+      "seconds": 48.253859758377075,
+      "texts_per_sec": 6.217119241905177
+    }
+  },
+  "qwen3-embedding-0.6b": {
+    "cpu_all12_bs8": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 37.87723398208618,
+      "texts_per_sec": 7.92032491448249
+    },
+    "cpu_all12_bs16": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 39.87659406661987,
+      "texts_per_sec": 7.5232102194787425
+    },
+    "cpu_all12_bs32": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 43.61084508895874,
+      "texts_per_sec": 6.879022852871821
+    },
+    "cpu_minus2_10_bs8": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 34.48897576332092,
+      "texts_per_sec": 8.698431697674549
+    },
+    "cpu_minus2_10_bs16": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 39.31005644798279,
+      "texts_per_sec": 7.631634932831409
+    },
+    "cpu_minus2_10_bs32": {
+      "provider": "CPUExecutionProvider",
+      "seconds": 39.95862126350403,
+      "texts_per_sec": 7.507766547340892
+    },
+    "gpu_dml_bs8": {
+      "provider": "DmlExecutionProvider",
+      "seconds": 76.95175909996033,
+      "texts_per_sec": 3.8985463556499083
+    },
+    "gpu_dml_bs16": {
+      "provider": "DmlExecutionProvider",
+      "seconds": 52.84698677062988,
+      "texts_per_sec": 5.676766421935854
+    },
+    "gpu_dml_bs32": {
+      "provider": "DmlExecutionProvider",
+      "seconds": 58.153491735458374,
+      "texts_per_sec": 5.158761598782532
+    }
+  }
+}

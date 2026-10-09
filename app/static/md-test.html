@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>Проверка Markdown-разбора</title>
+<style>body{font-family:Segoe UI,sans-serif;max-width:800px;margin:20px auto;padding:0 12px}
+.ok{color:#1f9d55}.bad{color:#dc2626}pre{background:#f2f2f2;padding:8px;white-space:pre-wrap}</style></head>
+<body>
+<h2>Самопроверка md.js</h2>
+<div id="res">…</div>
+<h3>Пример</h3>
+<div id="demo"></div>
+<script src="md.js"></script>
+<script>
+const f = Md.selfTest();
+document.getElementById("res").innerHTML = f.length
+  ? '<b class="bad">Провалено: ' + f.length + '</b><ul>' + f.map(x => "<li>" + Md.esc(x) + "</li>").join("") + "</ul>"
+  : '<b class="ok">Все проверки пройдены</b>';
+document.getElementById("demo").innerHTML = Md.render("### Заголовок\nТекст с **жирным**, *курсивом* и `кодом`.\n\n- пункт 1\n- пункт 2\n\n1. раз\n2. два\n\n> цитата\n\n<script>alert('xss')<\/script>");
+</script></body></html>

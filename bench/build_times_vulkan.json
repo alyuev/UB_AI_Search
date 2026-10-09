@@ -1,0 +1,16 @@
+{
+  "bge-m3": {
+    "seconds": 90.745352268219,
+    "db_bytes": 24940544,
+    "paragraphs": 1572,
+    "paras_per_sec": 17.32320125171357,
+    "extrapolated_full_corpus_seconds": 841.9344547277187
+  },
+  "multilingual-e5-base": {
+    "seconds": 43.83554720878601,
+    "db_bytes": 23408640,
+    "paragraphs": 1572,
+    "paras_per_sec": 35.86130663574612,
+    "extrapolated_full_corpus_seconds": 406.7057608397862
+  }
+}

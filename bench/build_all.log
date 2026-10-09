@@ -1,0 +1,20 @@
+2026-09-26 22:04:30 INFO [smartsearch.index] build_index start: json=D:\Develop\KU\SmartSearch\urantia_bilingual_rag.json db=D:\Develop\KU\SmartSearch\bench\multilingual-e5-small.db model=multilingual-e5-small scheme=D
+[multilingual-e5-small] parsing 0/0 parsing source JSON
+2026-09-26 22:04:30 INFO [smartsearch.index] parse_json(D:\Develop\KU\SmartSearch\urantia_bilingual_rag.json): 14585 ok, 0 bad out of 14585
+[multilingual-e5-small] parsing 14585/14585 parsed 14585 paragraphs
+[multilingual-e5-small] database 0/14585 inserting paragraphs
+[multilingual-e5-small] database 0/14585 inserting paragraphs
+[multilingual-e5-small] database 4000/14585 inserting paragraphs
+[multilingual-e5-small] database 8000/14585 inserting paragraphs
+[multilingual-e5-small] database 12000/14585 inserting paragraphs
+[multilingual-e5-small] database 14585/14585 paragraphs inserted
+[multilingual-e5-small] lemmatize 0/14585 lemmatizing russian text
+[multilingual-e5-small] lemmatize 0/14585 lemmatizing russian text
+[multilingual-e5-small] lemmatize 4000/14585 lemmatizing russian text
+[multilingual-e5-small] lemmatize 8000/14585 lemmatizing russian text
+[multilingual-e5-small] lemmatize 12000/14585 lemmatizing russian text
+[multilingual-e5-small] lemmatize 14585/14585 lemmatization done
+[multilingual-e5-small] fts 0/14585 building full-text index
+[multilingual-e5-small] fts 14585/14585 fts index built
+[multilingual-e5-small] embedding 0/14585 loading embedding model multilingual-e5-small
+[multilingual-e5-small] embedding 8000/29170 embedding en

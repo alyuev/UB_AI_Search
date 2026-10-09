@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Чтение — SmartSearch</title>
+<script>
+  // apply the saved theme before the first paint (same key as the search page)
+  try { const t = localStorage.getItem("theme"); if (t) document.documentElement.setAttribute("data-theme", t); } catch (e) {}
+</script>
+<link rel="stylesheet" href="style.css" />
+<link rel="stylesheet" href="read.css?v=3" />
+<script src="vendor/hyphenopoly/Hyphenopoly_Loader.js"></script>
+<script src="hyphenate.js"></script>
+</head>
+<body class="reader-page">
+<header class="topbar">
+  <h1><a href="/" class="brand-link">SmartSearch</a></h1>
+  <nav class="tabs">
+    <a class="tab-btn" href="/" id="back-to-search">Поиск</a>
+    <span class="tab-btn active">Чтение</span>
+  </nav>
+  <button id="settings-btn" class="icon-btn" title="Настройки текста" aria-label="Настройки текста" aria-expanded="false">Aa</button>
+</header>
+
+<div class="reader">
+  <aside id="toc" class="toc" aria-label="Оглавление">
+    <div class="toc-head">
+      <input id="toc-filter" type="search" placeholder="Найти документ или раздел…" autocomplete="off" aria-label="Поиск по оглавлению" />
+    </div>
+    <div id="toc-tree" class="toc-tree"></div>
+  </aside>
+  <button id="toc-toggle" class="toc-toggle" title="Показать / скрыть оглавление" aria-controls="toc" aria-expanded="true">‹</button>
+
+  <main class="read-main">
+    <div id="read-msg" class="msg-box hidden" role="alert"></div>
+    <div id="query-chip" class="query-chip hidden">
+      <span>Подсветка слов поиска: <b id="query-chip-text"></b></span>
+      <button id="query-clear" type="button" class="secondary small" title="Убрать подсветку слов поиска">✕ Убрать</button>
+    </div>
+    <nav class="chapter-nav top">
+      <button id="prev-top" type="button" class="secondary nav-prev">← <span>Предыдущий</span></button>
+      <div class="chapter-pos" id="chapter-pos"></div>
+      <button id="next-top" type="button" class="secondary nav-next"><span>Следующий</span> →</button>
+    </nav>
+    <article id="text" class="read-text"></article>
+    <nav class="chapter-nav bottom">
+      <button id="prev-bottom" type="button" class="secondary nav-prev">← <span>Предыдущий</span></button>
+      <div class="chapter-pos"></div>
+      <button id="next-bottom" type="button" class="secondary nav-next"><span>Следующий</span> →</button>
+    </nav>
+  </main>
+
+  <aside id="settings-panel" class="settings-panel hidden" aria-label="Настройки текста">
+    <div class="sp-head">
+      <strong>Настройки текста</strong>
+      <button id="settings-close" type="button" class="icon-btn" title="Закрыть" aria-label="Закрыть">✕</button>
+    </div>
+
+    <section class="sp-group">
+      <h4>Языки</h4>
+      <div class="sp-row"><span>Основной язык</span>
+        <div class="seg" data-key="primary"><button data-v="ru">Русский</button><button data-v="en">English</button></div>
+      </div>
+      <div class="sp-row"><span>Второй язык</span>
+        <div class="seg" data-key="second"><button data-v="columns">Колонка</button><button data-v="inter">Подстрочник</button><button data-v="off">Скрыть</button></div>
+      </div>
+      <label class="sp-slider" data-for="secondSize"><span>Размер второго языка <output></output></span>
+        <input type="range" data-key="secondSize" min="70" max="100" step="5" /></label>
+      <label class="sp-check"><input type="checkbox" data-key="pairs" /> Подсветка парных слов при наведении</label>
+    </section>
+
+    <section class="sp-group">
+      <h4>Шрифт</h4>
+      <div class="seg" data-key="font"><button data-v="serif">С засечками</button><button data-v="georgia">Georgia</button><button data-v="sans">Без засечек</button></div>
+      <label class="sp-slider"><span>Размер <output></output></span>
+        <input type="range" data-key="size" min="13" max="28" step="1" /></label>
+      <label class="sp-slider"><span>Толщина <output></output></span>
+        <input type="range" data-key="weight" min="300" max="700" step="50" /></label>
+      <div class="hint-text">Плавная толщина — у шрифта «Без засечек». У остальных только обычный и жирный.</div>
+    </section>
+
+    <section class="sp-group">
+      <h4>Интервалы</h4>
+      <label class="sp-slider"><span>Между строк <output></output></span>
+        <input type="range" data-key="lineHeight" min="1.2" max="2.2" step="0.05" /></label>
+      <label class="sp-slider"><span>Между букв <output></output></span>
+        <input type="range" data-key="letter" min="-0.02" max="0.12" step="0.01" /></label>
+      <label class="sp-slider"><span>Между слов <output></output></span>
+        <input type="range" data-key="word" min="0" max="0.5" step="0.05" /></label>
+      <label class="sp-slider"><span>Между абзацев <output></output></span>
+        <input type="range" data-key="paraGap" min="0.3" max="2.5" step="0.1" /></label>
+      <label class="sp-slider"><span>Ширина текста <output></output></span>
+        <input type="range" data-key="width" min="520" max="1600" step="20" /></label>
+    </section>
+
+    <section class="sp-group">
+      <h4>Вид</h4>
+      <div class="sp-row"><span>Выравнивание</span>
+        <div class="seg" data-key="align"><button data-v="justify">По ширине</button><button data-v="left">По левому краю</button></div>
+      </div>
+      <div class="sp-row"><span>Номера абзацев</span>
+        <div class="seg" data-key="nums"><button data-v="full">Полные (2:5.10)</button><button data-v="seq">По порядку</button><button data-v="off">Нет</button></div>
+      </div>
+      <div class="sp-row"><span>Тема</span>
+        <div class="seg" data-key="theme"><button data-v="light">Светлая</button><button data-v="paper">Бумага</button><button data-v="dark">Тёмная</button></div>
+      </div>
+    </section>
+
+    <button id="settings-reset" type="button" class="secondary small">Сбросить настройки</button>
+  </aside>
+</div>
+
+<script src="pairs-hover.js"></script>
+<script src="read.js?v=3"></script>
+</body>
+</html>

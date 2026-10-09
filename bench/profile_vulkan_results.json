@@ -1,0 +1,74 @@
+{
+  "multilingual-e5-small": {
+    "vulkan_bs8": {
+      "seconds": 1.6243038177490234,
+      "texts_per_sec": 184.69451140965919
+    },
+    "vulkan_bs16": {
+      "seconds": 0.9983289241790771,
+      "texts_per_sec": 300.5021618968809
+    },
+    "vulkan_bs32": {
+      "seconds": 1.0077261924743652,
+      "texts_per_sec": 297.6999131712372
+    },
+    "vulkan_bs64": {
+      "seconds": 0.9392709732055664,
+      "texts_per_sec": 319.3966475682229
+    }
+  },
+  "multilingual-e5-base": {
+    "vulkan_bs8": {
+      "seconds": 3.079404592514038,
+      "texts_per_sec": 97.42143034055775
+    },
+    "vulkan_bs16": {
+      "seconds": 2.389047622680664,
+      "texts_per_sec": 125.57305143351677
+    },
+    "vulkan_bs32": {
+      "seconds": 2.328228712081909,
+      "texts_per_sec": 128.85332031308002
+    },
+    "vulkan_bs64": {
+      "seconds": 2.4104819297790527,
+      "texts_per_sec": 124.45644013912948
+    }
+  },
+  "bge-m3": {
+    "vulkan_bs8": {
+      "seconds": 7.020790338516235,
+      "texts_per_sec": 42.73023200168681
+    },
+    "vulkan_bs16": {
+      "seconds": 6.5849244594573975,
+      "texts_per_sec": 45.558609190897265
+    },
+    "vulkan_bs32": {
+      "seconds": 6.548865795135498,
+      "texts_per_sec": 45.80945913150949
+    },
+    "vulkan_bs64": {
+      "seconds": 6.50714635848999,
+      "texts_per_sec": 46.10315850796634
+    }
+  },
+  "qwen3-embedding-0.6b": {
+    "vulkan_bs8": {
+      "seconds": 19.00997519493103,
+      "texts_per_sec": 15.781188398393827
+    },
+    "vulkan_bs16": {
+      "seconds": 10.352685451507568,
+      "texts_per_sec": 28.97798850406623
+    },
+    "vulkan_bs32": {
+      "seconds": 10.075508832931519,
+      "texts_per_sec": 29.775171157555675
+    },
+    "vulkan_bs64": {
+      "seconds": 9.753849983215332,
+      "texts_per_sec": 30.757085716537315
+    }
+  }
+}

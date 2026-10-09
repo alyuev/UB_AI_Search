@@ -1,0 +1,510 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SmartSearch — Urantia Book</title>
+<link rel="stylesheet" href="style.css" />
+<script src="vendor/hyphenopoly/Hyphenopoly_Loader.js"></script>
+<script src="hyphenate.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <h1>SmartSearch</h1>
+  <nav class="tabs">
+    <button class="tab-btn active" data-tab="search">Поиск</button>
+    <button class="tab-btn" data-tab="prepare">База данных</button>
+    <button class="tab-btn" data-tab="settings">Настройки</button>
+    <button class="tab-btn" data-tab="guide">Как это работает</button>
+    <a class="tab-btn" href="read.html" id="read-link" title="Читать книгу по документам">Чтение</a>
+  </nav>
+  <label class="book-picker" title="Активная книга (папка library/&lt;книга&gt;)">Книга:
+    <select id="book-select"></select>
+  </label>
+  <button id="theme-toggle" class="icon-btn" title="Тема">🌓</button>
+</header>
+
+<div id="db-banner" class="banner-error hidden"></div>
+<main>
+  <!-- ===================== SEARCH / RAG / TRANSLATION TAB ===================== -->
+  <section id="tab-search" class="tab-pane active">
+    <div class="search-controls">
+      <input id="query-input" type="text" list="recent-queries" autocomplete="off"
+             placeholder="Введите запрос… (↑ — прошлые запросы)" />
+      <datalist id="recent-queries"></datalist>
+      <select id="qmode-select" title="Режим поиска">
+        <option value="rag" selected>Вопрос к тексту</option>
+        <option value="search">Обычный поиск</option>
+        <option value="translation">Анализ перевода</option>
+      </select>
+      <div id="search-submode" class="mode-group" style="display:none">
+        <label title="По словам и по смыслу вместе (рекомендуется)"><input type="radio" name="smode" value="hybrid" checked /> Смешанный</label>
+        <label title="Только точные совпадения слов"><input type="radio" name="smode" value="fts" /> По словам</label>
+        <label title="Только по смыслу, без учёта точных слов"><input type="radio" name="smode" value="semantic" /> По смыслу</label>
+        <select id="search-sort" title="Порядок результатов">
+          <option value="relevance" selected>Сортировка: по релевантности</option>
+          <option value="para">Сортировка: по номерам параграфов</option>
+        </select>
+      </div>
+      <button id="query-btn">Найти</button>
+      <button id="history-btn" type="button" class="secondary" title="Прошлые запросы и сохранённые результаты">История</button>
+      <span id="llm-badge" class="llm-badge hidden"></span>
+    </div>
+
+    <div id="history-note" class="history-note hidden"></div>
+    <div id="history-extra" class="history-extra hidden"></div>
+
+    <div id="status-panel" class="status-panel hidden">
+      <div class="stages"></div>
+      <div class="progress-line">
+        <span class="spinner hidden">⏳</span>
+        <span class="msg"></span>
+      </div>
+    </div>
+
+    <div id="results" class="results"></div>
+  </section>
+
+  <!-- ===================== DATABASE TAB ===================== -->
+  <section id="tab-prepare" class="tab-pane">
+    <h2>База данных</h2>
+
+    <div id="db-message" class="msg-box hidden" role="alert"></div>
+
+    <div id="db-card" class="card db-card">
+      <div class="db-card-head">
+        <h3>Состояние базы</h3>
+        <span id="db-badge" class="badge">загрузка…</span>
+        <button id="db-refresh-btn" class="secondary small" title="Проверить заново">Обновить</button>
+      </div>
+      <div id="db-summary" class="db-summary"></div>
+      <div id="db-nodb" class="db-nodb hidden">
+        <div class="db-nodb-title">База ещё не построена</div>
+        <div>Ниже выберите исходный файл с текстом книги и нажмите «Построить базу». Пока базы нет, поиск не работает.</div>
+      </div>
+      <ul id="db-rows" class="db-rows"></ul>
+      <div id="db-warnings" class="db-warnings"></div>
+    </div>
+
+    <div class="card actions-card">
+      <h3>Действия</h3>
+      <div class="action-row">
+        <div>
+          <strong>Перестроить полнотекстовый индекс</strong>
+          <div class="hint-text">Пересобирает только поиск по словам из уже сохранённых абзацев (около минуты). Векторы для поиска по смыслу и сами абзацы не меняются, поиск продолжает работать.</div>
+        </div>
+        <button id="rebuild-fts-btn" type="button">Перестроить полнотекстовый индекс</button>
+      </div>
+      <div id="rebuild-fts-confirm" class="confirm-bar hidden">
+        <span>Перестроить полнотекстовый индекс сейчас?</span>
+        <button id="rebuild-fts-yes" type="button">Да, перестроить</button>
+        <button id="rebuild-fts-no" type="button" class="secondary">Отмена</button>
+      </div>
+
+      <div class="action-row">
+        <div>
+          <strong>Построить словарь терминов</strong>
+          <div class="hint-text">Словарь «русское слово ↔ английское слово» (Эдемия ↔ Edentia, Настройщик ↔ Adjuster). Строится из уже имеющегося параллельного текста книги, занимает несколько секунд, ничего больше в базе не меняет. С ним вопросы по именам и терминам ищутся точнее в обоих языках; без него поиск тоже работает.</div>
+        </div>
+        <button id="build-glossary-btn" type="button">Построить словарь терминов</button>
+      </div>
+
+      <details id="rebuild-all-details" class="rebuild-all">
+        <summary>Построить базу заново / для другой книги</summary>
+        <div class="form-grid">
+          <label>Источник (файл в папке программы)
+            <select id="source-file"></select>
+          </label>
+          <label>Модель эмбеддингов
+            <select id="embed-model-select"></select>
+          </label>
+          <label>Среда выполнения (runtime)
+            <select id="index-runtime"></select>
+          </label>
+          <div id="runtime-warning" class="hint-warning" style="display:none"></div>
+          <label>Устройство
+            <select id="index-device">
+              <option value="auto" selected>авто</option>
+              <option value="cpu">CPU</option>
+              <option value="gpu">GPU</option>
+            </select>
+          </label>
+          <label>Формат векторов
+            <select id="index-vector-dtype">
+              <option value="int8" selected>int8 (по умолчанию, компактнее)</option>
+              <option value="float32">float32</option>
+            </select>
+          </label>
+          <label>Схема индексации
+            <select id="index-scheme">
+              <option value="D" selected>D (раздельные EN/RU векторы)</option>
+              <option value="A">A</option>
+              <option value="B">B</option>
+              <option value="C">C</option>
+            </select>
+          </label>
+          <label>Код книги (латиницей) <input id="book-id" type="text" value="urantia" /></label>
+          <label>Название книги <input id="book-name" type="text" value="The Urantia Book" /></label>
+        </div>
+        <div class="btn-row">
+          <button id="start-index-btn" type="button">Построить базу</button>
+        </div>
+        <div id="start-index-confirm" class="confirm-bar hidden">
+          <span id="start-index-confirm-text">База этой книги уже есть и будет заменена после успешной сборки (около 20 минут). Продолжить?</span>
+          <button id="start-index-yes" type="button">Да, построить</button>
+          <button id="start-index-no" type="button" class="secondary">Отмена</button>
+        </div>
+      </details>
+    </div>
+
+    <div id="index-status" class="status-panel">
+      <div class="progress-head">
+        <strong>Ход выполнения</strong>
+        <button id="cancel-index-btn" type="button" class="secondary small" disabled>Отменить</button>
+      </div>
+      <div class="stages"></div>
+      <div class="progress-bar-outer"><div class="progress-bar-inner" style="width:0%"></div></div>
+      <div class="progress-line">
+        <span class="spinner hidden">⏳</span>
+        <span class="msg">Задач сейчас нет.</span>
+      </div>
+      <div class="counters"></div>
+      <pre class="job-log"></pre>
+    </div>
+  </section>
+
+  <!-- ===================== GUIDE TAB ===================== -->
+  <section id="tab-guide" class="tab-pane">
+    <div class="guide">
+      <h2>Как работает поиск: краткий гид</h2>
+      <p class="hint-text">Всё происходит на вашем компьютере. Сначала книгу один раз готовят, потом по готовой базе ищут за доли секунды.</p>
+
+      <h3>Часть 1. Как готовится текст книги</h3>
+      <div class="flow">
+        <div class="fb">Файл книги<small>JSON: абзацы EN + RU</small></div><div class="fa">→</div>
+        <div class="fb">Проверка<small>битые записи пропускаются</small></div><div class="fa">→</div>
+        <div class="fb">База book.db<small>абзацы + соседи + названия глав</small></div><div class="fa">→</div>
+        <div class="fb">Леммы RU<small>слова к словарной форме</small></div><div class="fa">→</div>
+        <div class="fb">Индекс по словам<small>FTS5, как указатель</small></div><div class="fa">→</div>
+        <div class="fb">Векторы смысла<small>bge-m3, EN и RU отдельно</small></div><div class="fa">→</div>
+        <div class="fb ok">Готовая база</div>
+      </div>
+      <ol class="guide-steps">
+        <li><b>Исходный файл.</b> Книга приходит одним файлом (<code>urantia_bilingual_rag.json</code>): список абзацев. У каждого есть номер вида <code>147:2.4</code> (глава:раздел.абзац), английский и русский текст. Названия глав и разделов берутся отдельно из электронных изданий (EPUB).</li>
+        <li><b>Проверка.</b> Для каждой записи проверяется, что есть все поля, номер записан верно, а хотя бы один из текстов не пуст. Битые записи пропускаются, причина пишется в <code>logs\index.log</code>.</li>
+        <li><b>Складывание в базу.</b> Абзацы записываются в один файл <code>book.db</code> (SQLite) в порядке чтения. У каждого абзаца есть адрес (документ:раздел.абзац) и сквозной номер по книге; по этому номеру кнопка «Контекст» берёт соседние абзацы. Туда же попадают названия глав и разделов.</li>
+        <li><b>Словарные формы.</b> Русский текст разбирается морфологией (pymorphy3): «агондонтеров» и «агондонтерам» становятся «агондонтер». Поэтому русский поиск находит слово в любой форме.</li>
+        <li><b>Индекс по словам</b> (FTS5). Строится указатель, как в конце книги: для каждого слова указано, в каких абзацах оно есть. Индексируются английский текст, русский текст, русские словарные формы и названия глав.</li>
+        <li><b>Векторы смысла.</b> Нейросеть-эмбеддер (по умолчанию <b>bge-m3</b>) превращает каждый абзац в набор чисел — «координаты смысла». Тексты близкие по смыслу получают близкие координаты, на любом из двух языков. Английская и русская версии абзаца кодируются отдельно, поэтому русский вопрос находит и русскую, и английскую версию. Числа сжимаются (int8), чтобы база была меньше.</li>
+        <li><b>Завершение.</b> В базу записывается «паспорт» (какой моделью построены векторы), и готовый файл атомарно ставится на место: недостроенная база не подменит рабочую. Это самый долгий этап, около 15–20 минут на всю книгу.</li>
+        <li><b>Словарь терминов (по желанию).</b> Программа сопоставляет русские и английские слова по тому, как часто они встречаются в парных абзацах («Вселенский Отец» ↔ «Universal Father»). Он нужен режиму «Вопрос к тексту».</li>
+      </ol>
+
+      <h3>Часть 2. Как ищет каждый режим</h3>
+
+      <div class="card guide-card">
+        <h4>По словам (fts)</h4>
+        <p>Работает как указатель: берёт слова запроса и находит абзацы, где они есть.</p>
+        <div class="flow small">
+          <div class="fb">Запрос</div><div class="fa">→</div>
+          <div class="fb">Убрать служебные слова<small>«что», «это», «what»</small></div><div class="fa">→</div>
+          <div class="fb">Русские слова к начальной форме</div><div class="fa">→</div>
+          <div class="fb">Найти в указателе</div><div class="fa">→</div>
+          <div class="fb">Ранжирование bm25</div>
+        </div>
+        <ul>
+          <li>Фраза в кавычках <code>"вот так"</code> ищется точно и подряд.</li>
+          <li>Чем реже слово в книге и чем чаще оно в абзаце, тем выше абзац. Совпадение в названии главы весит больше, чем в тексте.</li>
+          <li>Подходит, когда вы знаете точное слово или имя. Не находит то, что сказано другими словами.</li>
+        </ul>
+      </div>
+
+      <div class="card guide-card">
+        <h4>По смыслу (semantic)</h4>
+        <p>Запрос тоже превращается в «координаты смысла», и берутся абзацы с самыми близкими координатами. Для каждого абзаца учитывается лучший из двух языков.</p>
+        <div class="flow small">
+          <div class="fb">Запрос</div><div class="fa">→</div>
+          <div class="fb">Вектор запроса</div><div class="fa">→</div>
+          <div class="fb">Сравнение со всеми абзацами<small>EN и RU, берётся лучший</small></div><div class="fa">→</div>
+          <div class="fb">Самые близкие</div>
+        </div>
+        <ul>
+          <li>Находит абзацы, в которых нужных слов нет, но речь о том же.</li>
+          <li>Русский запрос находит английский абзац и наоборот.</li>
+          <li>Слабее на редких именах и терминах: смысловая модель может «размыть» их.</li>
+        </ul>
+      </div>
+
+      <div class="card guide-card">
+        <h4>Смешанный (hybrid) — по умолчанию</h4>
+        <p>Запускает оба поиска и объединяет результаты методом <b>RRF</b> (слияние по местам в списках).</p>
+        <div class="flow small">
+          <div class="fcol">
+            <div class="fb">Поиск по словам<small>топ-50</small></div>
+            <div class="fb">Поиск по смыслу<small>топ-50</small></div>
+          </div><div class="fa">→</div>
+          <div class="fb">RRF<small>балл = 1/(60 + место) от каждого списка, баллы складываются</small></div><div class="fa">→</div>
+          <div class="fb ok">Единый список</div>
+        </div>
+        <ul>
+          <li>Абзац, найденный обоими способами, оказывается выше всех.</li>
+          <li>Сочетает точность слов и понимание смысла. На проверочных запросах это лучший вариант, поэтому он стоит по умолчанию.</li>
+        </ul>
+      </div>
+
+      <div class="card guide-card">
+        <h4>Вопрос к тексту</h4>
+        <p>Программа не просто ищет, а отвечает по прочитанным абзацам. Нужна языковая модель (LM Studio или другой подключённый провайдер).</p>
+        <div class="flow small">
+          <div class="fb">Вопрос</div><div class="fa">→</div>
+          <div class="fb">План поиска<small>ключевые слова EN/RU + смысловая фраза</small></div><div class="fa">→</div>
+          <div class="fb">Проверка слов<small>по словарю книги</small></div><div class="fa">→</div>
+          <div class="fb">Слова + смысл + RRF</div><div class="fa">→</div>
+          <div class="fb">Контекст<small>соседи, разделы</small></div><div class="fa">→</div>
+          <div class="fb ok">Ответ со ссылками</div>
+        </div>
+        <ol>
+          <li><b>План поиска.</b> Модель превращает вопрос в ключевые слова на обоих языках и перефразированную смысловую фразу.</li>
+          <li><b>Проверка слов.</b> Каждое слово сверяется с реальным словарём книги: есть ли оно и в скольких абзацах. Придуманные моделью слова отбрасываются, слова пользователя остаются. Недостающий перевод берётся из словаря терминов.</li>
+          <li><b>Поиск.</b> Три списка: по проверенным словам, по смысловой фразе плана и по самому вопросу. Сливаются методом RRF.</li>
+          <li><b>Гарантия редких слов.</b> Абзацы с редким словом из вопроса (оно встречается лишь в нескольких абзацах) обязательно попадут к модели, даже если слияние поставило их ниже.</li>
+          <li><b>Сбор контекста.</b> К найденным абзацам добавляются соседние, а для вопросов вида «перечислите…» — целые разделы. Всё обрезается по размеру, который вмещает модель.</li>
+          <li><b>Ответ.</b> Модель отвечает только по этим абзацам и ссылается на номера вида <code>[147:2.4]</code>. Выводы, которых нет в тексте прямо, помечаются.</li>
+        </ol>
+      </div>
+
+      <div class="card guide-card">
+        <h4>Анализ перевода</h4>
+        <p>Это не поиск, а прямая выборка: вы указываете главу или раздел (например, «Paper 147 Section 2»), и программа берёт эти абзацы по номерам.</p>
+        <div class="flow small">
+          <div class="fb">Глава / раздел</div><div class="fa">→</div>
+          <div class="fb">Порции по размеру контекста</div><div class="fa">→</div>
+          <div class="fb">Сравнение EN и RU моделью</div><div class="fa">→</div>
+          <div class="fb">Перепроверка замечаний<small>цитата должна быть в тексте</small></div><div class="fa">→</div>
+          <div class="fb ok">Отчёт (Markdown)</div>
+        </div>
+        <p class="hint-text">Ищутся пропуски, добавления, искажения смысла и неверные термины. Показываются только существенные расхождения.</p>
+      </div>
+
+      <h3>Какой режим выбрать</h3>
+      <table class="guide-table">
+        <tr><td>Знаю точное слово или имя</td><td><b>По словам</b> (фразу — в кавычках)</td></tr>
+        <tr><td>Помню смысл, но не слова</td><td><b>По смыслу</b></td></tr>
+        <tr><td>Не знаю, что выбрать</td><td><b>Смешанный</b></td></tr>
+        <tr><td>Нужен связный ответ со ссылками</td><td><b>Вопрос к тексту</b></td></tr>
+        <tr><td>Подозреваю ошибку перевода</td><td><b>Анализ перевода</b></td></tr>
+      </table>
+      <p class="hint-text">Формат файла и сборка другой книги описаны во вкладке «База данных». Параметры поиска (число кандидатов, соседние абзацы, константа RRF) — в «Настройках».</p>
+    </div>
+  </section>
+
+  <!-- ===================== SETTINGS TAB ===================== -->
+  <section id="tab-settings" class="tab-pane">
+    <div class="settings-head">
+      <h2>Настройки</h2>
+      <div class="inline-actions">
+        <button type="button" class="secondary small" id="set-expand-all">Развернуть все</button>
+        <button type="button" class="secondary small" id="set-collapse-all">Свернуть все</button>
+      </div>
+    </div>
+
+    <div class="settings-layout">
+    <nav class="settings-nav" id="settings-nav" aria-label="Разделы настроек">
+      <a href="#sec-llm" data-sec="sec-llm"><span class="sn-ico">🤖</span><span>Модель LLM</span></a>
+      <a href="#sec-prompts" data-sec="sec-prompts"><span class="sn-ico">📝</span><span>Промты</span></a>
+      <a href="#sec-options" data-sec="sec-options"><span class="sn-ico">🎚</span><span>Параметры ответа</span></a>
+      <a href="#sec-search" data-sec="sec-search"><span class="sn-ico">🔎</span><span>Поиск</span></a>
+      <a href="#sec-embed" data-sec="sec-embed"><span class="sn-ico">🧭</span><span>Embeddings</span></a>
+      <a href="#sec-app" data-sec="sec-app"><span class="sn-ico">⚙</span><span>Программа</span></a>
+    </nav>
+
+    <div class="settings-main">
+    <!-- ---- Модель LLM ---- -->
+    <details class="set-block" id="sec-llm" open>
+      <summary><span class="sb-ico">🤖</span><span class="sb-title">Модель LLM<span class="set-sub">откуда берётся модель: программа на этом компьютере или облачный сервис</span></span></summary>
+      <div class="set-body">
+        <div id="providers-root">Загрузка…</div>
+
+        <div class="sub-card">
+          <h3>Параметры ответа модели <span class="sub-note">для любого провайдера</span></h3>
+          <div class="mini-grid">
+            <label class="mini-field"><span>Температура</span>
+              <input id="set-temperature" type="number" step="0.05" min="0" max="2" />
+              <small>0 — строго и предсказуемо, выше — свободнее (0–2)</small></label>
+            <label class="mini-field"><span>Максимум токенов ответа</span>
+              <input id="set-max-tokens" type="number" step="16" min="16" />
+              <small>длина ответа; токен — примерно 3–4 буквы</small></label>
+            <label class="mini-field"><span>Таймаут, секунд</span>
+              <input id="set-timeout" type="number" step="1" min="1" />
+              <small>сколько ждать модель, прежде чем сдаться</small></label>
+          </div>
+          <div class="set-actions"><button id="save-llm-settings-btn" type="button">Сохранить</button><span id="llm-settings-status" class="save-status"></span></div>
+        </div>
+
+        <div class="sub-card" id="task-llm-root"></div>
+      </div>
+    </details>
+
+    <!-- ---- Промты ---- -->
+    <details class="set-block" id="sec-prompts">
+      <summary><span class="sb-ico">📝</span><span class="sb-title">Промты<span class="set-sub">тексты инструкций, которые программа отправляет модели</span></span></summary>
+      <div class="set-body">
+        <div class="hint-text">Промт — это инструкция для модели. Менять их не обязательно: стандартные тексты подобраны и проверены. Правки действуют со следующего вопроса, перезапуск не нужен. Подстановки в фигурных скобках {…} программа заменяет сама — их можно переставлять, но нельзя придумывать новые. Нажмите на заголовок промта, чтобы раскрыть его.</div>
+        <div id="prompt-presets" class="preset-bar"></div>
+        <div id="prompts-global-warn"></div>
+        <div id="prompts-root">Загрузка…</div>
+      </div>
+    </details>
+
+    <!-- ---- Параметры ответа ---- -->
+    <details class="set-block" id="sec-options">
+      <summary><span class="sb-ico">🎚</span><span class="sb-title">Параметры ответа<span class="set-sub">как искать, сколько давать источников, как проверять перевод</span></span></summary>
+      <div class="set-body">
+        <div class="hint-text">Значения применяются со следующего вопроса. Кнопка «по умолчанию» возвращает рекомендованное значение в поле (после этого нажмите «Сохранить параметры»).</div>
+        <div id="options-root">Загрузка…</div>
+        <div class="set-actions sticky-actions">
+          <button id="save-options-btn" type="button">Сохранить параметры</button>
+          <button id="options-defaults-btn" type="button" class="secondary">Все по умолчанию</button>
+          <span id="options-status" class="save-status"></span>
+        </div>
+      </div>
+    </details>
+
+    <!-- ---- Поиск ---- -->
+    <details class="set-block" id="sec-search">
+      <summary><span class="sb-ico">🔎</span><span class="sb-title">Поиск<span class="set-sub">как работает поиск по словам</span></span></summary>
+      <div class="set-body">
+        <div class="sub-card">
+          <h3>Веса совпадений <span class="sub-note">насколько важно совпадение в каждой части текста (больше — важнее)</span></h3>
+          <div class="mini-grid">
+            <label class="mini-field"><span>Английский текст</span><input id="set-w-en" type="number" step="0.1" min="0" /></label>
+            <label class="mini-field"><span>Русский текст</span><input id="set-w-ru" type="number" step="0.1" min="0" /></label>
+            <label class="mini-field"><span>Русский с учётом форм слов</span><input id="set-w-ru_lemma" type="number" step="0.1" min="0" />
+              <small>«жизни», «жизнь» — одно слово</small></label>
+            <label class="mini-field"><span>Заголовок (английский)</span><input id="set-w-title_en" type="number" step="0.1" min="0" /></label>
+            <label class="mini-field"><span>Заголовок (русский)</span><input id="set-w-title_ru" type="number" step="0.1" min="0" /></label>
+          </div>
+        </div>
+        <div class="sub-card">
+          <h3>Слова в запросе</h3>
+          <div class="set-grid one-col">
+            <div class="set-row">
+              <div class="set-label">Смешанный поиск<span class="hint-text">когда в запросе несколько слов</span></div>
+              <div class="set-field">
+                <select id="set-fts-mode-hybrid">
+                  <option value="or">любое слово (OR)</option>
+                  <option value="and">все слова (AND)</option>
+                  <option value="and_fallback_or">все слова, а если ничего нет — любое</option>
+                </select>
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="set-label">Режим «По словам»</div>
+              <div class="set-field">
+                <select id="set-fts-mode-standalone">
+                  <option value="or">любое слово (OR)</option>
+                  <option value="and">все слова (AND)</option>
+                  <option value="and_fallback_or">все слова, а если ничего нет — любое</option>
+                </select>
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="set-label">Не учитывать служебные слова<span class="hint-text">«и», «в», «the», «of» не участвуют в поиске по словам</span></div>
+              <div class="set-field"><label class="check-inline"><input type="checkbox" id="set-fts-stopwords" /> да</label></div>
+            </div>
+          </div>
+        </div>
+        <div class="hint-text">Фразы в кавычках всегда ищутся точно. После сохранения поисковый индекс пересоздаётся.</div>
+        <div class="set-actions"><button id="save-search-settings-btn" type="button">Сохранить</button><span id="search-settings-status" class="save-status"></span></div>
+      </div>
+    </details>
+
+    <!-- ---- Embeddings ---- -->
+    <details class="set-block" id="sec-embed">
+      <summary><span class="sb-ico">🧭</span><span class="sb-title">Embeddings<span class="set-sub">модель для поиска по смыслу</span></span></summary>
+      <div class="set-body">
+        <div class="set-grid one-col">
+          <div class="set-row"><div class="set-label">Модель</div><div class="set-field"><select id="set-embed-model"></select></div></div>
+          <div class="set-row"><div class="set-label">Среда выполнения (runtime)</div><div class="set-field"><select id="set-embed-runtime"></select></div></div>
+          <div class="set-row">
+            <div class="set-label">Устройство</div>
+            <div class="set-field">
+              <select id="set-device" class="narrow">
+                <option value="auto">авто</option>
+                <option value="cpu">CPU</option>
+                <option value="gpu">GPU</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        <div id="set-runtime-warning" class="hint-warning" style="display:none"></div>
+        <div class="set-actions"><button id="load-embed-btn" type="button">Загрузить модель</button><span id="embed-status" class="save-status"></span></div>
+      </div>
+    </details>
+
+    <!-- ---- Программа ---- -->
+    <details class="set-block" id="sec-app">
+      <summary><span class="sb-ico">⚙</span><span class="sb-title">Программа<span class="set-sub">откуда запущена, перезапуск</span></span></summary>
+      <div class="set-body">
+        <div class="sub-card">
+          <h3>Где находится программа</h3>
+          <div id="app-info" class="info-table">Загрузка…</div>
+        </div>
+        <div class="sub-card">
+          <h3>Перезапуск</h3>
+          <div class="hint-text">Перезапуск нужен после обновления файлов программы. Займёт около 10–30 секунд, страница обновится сама. Задачи, которые сейчас выполняются, будут прерваны.</div>
+          <div class="set-actions"><button id="restart-btn" type="button">Перезапустить программу</button><span id="restart-status" class="save-status"></span></div>
+        </div>
+      </div>
+    </details>
+    </div>
+    </div>
+  </section>
+</main>
+
+<aside id="history-panel" class="history-panel hidden" aria-label="История запросов">
+  <div class="history-head">
+    <strong>История</strong>
+    <button id="history-close" type="button" class="secondary small" title="Закрыть">✕</button>
+  </div>
+  <div class="history-filters">
+    <select id="history-mode">
+      <option value="">Все виды</option>
+      <option value="search">Поиск</option>
+      <option value="rag">Вопрос</option>
+      <option value="translation">Анализ перевода</option>
+    </select>
+    <input id="history-q" type="text" placeholder="Найти в истории…" />
+  </div>
+  <div class="history-filters">
+    <select id="history-rating" title="Фильтр по оценке">
+      <option value="">Любые оценки</option>
+      <option value="up">👍 Хорошие</option>
+      <option value="down">👎 Плохие</option>
+      <option value="rated">Все с оценкой</option>
+    </select>
+    <select id="history-sort" title="Порядок">
+      <option value="date">Сначала новые</option>
+      <option value="rating">Сначала с лучшей оценкой</option>
+    </select>
+  </div>
+  <div id="history-list" class="history-list"></div>
+  <div class="history-foot">
+    <button id="history-clear" type="button" class="secondary small">Очистить историю</button>
+    <span class="hint-text">Закреплённые остаются.</span>
+  </div>
+  <div id="history-clear-confirm" class="confirm-bar hidden">
+    <span id="history-clear-text">Очистить историю? Закреплённые записи сохранятся.</span>
+    <button id="history-clear-yes" type="button">Да, очистить</button>
+    <button id="history-clear-no" type="button" class="secondary">Отмена</button>
+  </div>
+</aside>
+
+<script src="md.js"></script>
+<script src="app.js"></script>
+<script src="settings-ui.js"></script>
+<script src="providers-ui.js"></script>
+<script src="history-ui.js"></script>
+<script src="pairs-hover.js"></script>
+</body>
+</html>

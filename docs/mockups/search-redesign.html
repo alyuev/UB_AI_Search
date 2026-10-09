@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SmartSearch — новый дизайн</title>
+<style>
+:root {
+  --bg: #f6f5f1;
+  --surface: #ffffff;
+  --surface-2: #f0eee8;
+  --text: #1d1c1a;
+  --muted: #6d6a63;
+  --line: #e4e1d8;
+  --accent: #3d5afe;
+  --accent-ink: #ffffff;
+  --accent-soft: #e9ecff;
+  --gold: #a8741a;
+  --gold-soft: #f6ecd8;
+  --mark: #fff1b8;
+  --shadow: 0 1px 2px rgba(30,25,10,.05), 0 8px 24px rgba(30,25,10,.06);
+  --radius: 14px;
+  --sans: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  --serif: "Cambria", "Georgia", "Times New Roman", serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121316; --surface: #1b1d21; --surface-2: #23262b; --text: #ecebe7; --muted: #9b9a94;
+    --line: #2d3036; --accent: #8c9eff; --accent-ink: #10132a; --accent-soft: #232a4d;
+    --gold: #e0b45e; --gold-soft: #3a2f1a; --mark: #5a4a12; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #121316; --surface: #1b1d21; --surface-2: #23262b; --text: #ecebe7; --muted: #9b9a94;
+  --line: #2d3036; --accent: #8c9eff; --accent-ink: #10132a; --accent-soft: #232a4d;
+  --gold: #e0b45e; --gold-soft: #3a2f1a; --mark: #5a4a12; --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.25);
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 var(--sans); }
+button, input, select { font: inherit; color: inherit; }
+
+/* ---------- top bar ---------- */
+.topbar {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; gap: 20px;
+  padding: 10px 24px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -.01em; }
+.brand-mark {
+  width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
+  background: linear-gradient(135deg, var(--accent), #7c4dff); color: #fff; font-size: 15px;
+}
+.nav { display: flex; gap: 2px; flex: 1; overflow-x: auto; }
+.nav button {
+  border: 0; background: none; padding: 7px 12px; border-radius: 9px; color: var(--muted); cursor: pointer; white-space: nowrap;
+}
+.nav button:hover { background: var(--surface-2); color: var(--text); }
+.nav button.on { background: var(--surface); color: var(--text); box-shadow: var(--shadow); font-weight: 600; }
+.chip-select {
+  border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 5px 12px; font-size: 13px;
+}
+.icon-btn {
+  width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface);
+  cursor: pointer; display: grid; place-items: center;
+}
+.icon-btn svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+
+/* ---------- search hero ---------- */
+main { max-width: 1080px; margin: 0 auto; padding: 32px 24px 64px; }
+.hero h1 { font: 600 28px/1.2 var(--serif); margin: 0 0 4px; letter-spacing: -.01em; }
+.hero p { margin: 0 0 20px; color: var(--muted); }
+.searchbox {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 18px;
+  padding: 8px 8px 8px 18px; box-shadow: var(--shadow);
+  transition: border-color .15s, box-shadow .15s;
+}
+.searchbox:focus-within { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft), var(--shadow); }
+.searchbox svg { width: 20px; height: 20px; stroke: var(--muted); fill: none; stroke-width: 2; flex: none; }
+.searchbox input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; font-size: 17px; padding: 8px 0; }
+.btn {
+  border: 0; border-radius: 12px; padding: 10px 20px; cursor: pointer; font-weight: 600;
+  background: var(--accent); color: var(--accent-ink);
+}
+.btn:hover { filter: brightness(1.08); }
+.btn.ghost { background: transparent; color: var(--muted); font-weight: 500; }
+.btn.ghost:hover { background: var(--surface-2); color: var(--text); }
+
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 14px; }
+.segmented {
+  display: inline-flex; padding: 3px; gap: 2px; background: var(--surface-2); border-radius: 11px;
+}
+.segmented button {
+  border: 0; background: none; padding: 6px 12px; border-radius: 8px; cursor: pointer; color: var(--muted); font-size: 13.5px;
+}
+.segmented button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.08); font-weight: 600; }
+.spacer { flex: 1; }
+.meta { color: var(--muted); font-size: 13px; }
+.status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #22a06b; margin-right: 6px; box-shadow: 0 0 0 3px color-mix(in srgb, #22a06b 25%, transparent); }
+
+/* ---------- results ---------- */
+.results-head { display: flex; align-items: baseline; gap: 12px; margin: 32px 0 12px; }
+.results-head h2 { font-size: 15px; margin: 0; }
+.result {
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  padding: 18px 22px 20px; margin-bottom: 14px; box-shadow: var(--shadow);
+  animation: rise .35s ease both;
+}
+.result:nth-child(2) { animation-delay: .05s } .result:nth-child(3) { animation-delay: .1s } .result:nth-child(4) { animation-delay: .15s }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+.r-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 12px; }
+.ref {
+  font: 600 13px var(--sans); color: var(--gold); background: var(--gold-soft);
+  padding: 3px 9px; border-radius: 7px; font-variant-numeric: tabular-nums;
+}
+.crumbs { color: var(--muted); font-size: 13.5px; }
+.crumbs b { color: var(--text); font-weight: 600; }
+.badges { margin-left: auto; display: flex; gap: 6px; }
+.badge {
+  font-size: 12px; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); white-space: nowrap;
+}
+.badge.top { border-color: transparent; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.texts { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+.texts > div {
+  padding: 0 20px; font: 16.5px/1.65 var(--serif);
+  text-align: justify; text-justify: inter-word;
+  hyphens: auto; -webkit-hyphens: auto; hyphenate-limit-chars: 6 3 2;
+  overflow-wrap: break-word;
+}
+.texts > div:first-child { padding-left: 0; border-right: 1px solid var(--line); }
+.texts > div:last-child { padding-right: 0; }
+.lang { display: block; font: 600 11px/1 var(--sans); letter-spacing: .08em; color: var(--muted); margin-bottom: 6px; }
+mark { background: var(--mark); color: inherit; border-radius: 3px; padding: 0 2px; }
+.r-actions { display: flex; gap: 4px; margin-top: 12px; opacity: .0; transition: opacity .15s; }
+.result:hover .r-actions, .result:focus-within .r-actions { opacity: 1; }
+.r-actions button { border: 0; background: none; color: var(--muted); font-size: 13px; padding: 5px 9px; border-radius: 8px; cursor: pointer; }
+.r-actions button:hover { background: var(--surface-2); color: var(--text); }
+
+.note {
+  margin-top: 28px; padding: 14px 18px; border-radius: 12px; border: 1px dashed var(--line); color: var(--muted); font-size: 13.5px;
+}
+
+@media (max-width: 760px) {
+  .topbar { padding: 10px 16px; gap: 10px; flex-wrap: wrap; }
+  .nav { order: 3; flex-basis: 100%; }
+  main { padding: 20px 16px 48px; }
+  .texts { grid-template-columns: 1fr; }
+  .texts > div, .texts > div:first-child { padding: 0; border: 0; }
+  .texts > div + div { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .badges { margin-left: 0; }
+  .r-actions { opacity: 1; }
+}
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark">✦</span>SmartSearch</div>
+  <nav class="nav">
+    <button class="on">Поиск</button>
+    <button>База данных</button>
+    <button>Настройки</button>
+    <button>Как это работает</button>
+  </nav>
+  <select class="chip-select" aria-label="Книга"><option>Книга Урантии</option></select>
+  <button class="icon-btn" id="theme" title="Светлая / тёмная тема" aria-label="Сменить тему">
+    <svg viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+  </button>
+</header>
+
+<main>
+  <section class="hero">
+    <h1>Поиск по книге</h1>
+    <p>Английский и русский текст рядом. Ищет и по словам, и по смыслу.</p>
+    <div class="searchbox">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input value="любовь Бога" aria-label="Запрос" />
+      <button class="btn ghost">История</button>
+      <button class="btn">Найти</button>
+    </div>
+    <div class="toolbar">
+      <div class="segmented" role="tablist" aria-label="Режим">
+        <button>Вопрос к тексту</button>
+        <button class="on">Поиск</button>
+        <button>Анализ перевода</button>
+      </div>
+      <div class="segmented" aria-label="Способ поиска">
+        <button class="on">Смешанный</button>
+        <button>По словам</button>
+        <button>По смыслу</button>
+      </div>
+      <span class="spacer"></span>
+      <span class="meta"><span class="status-dot"></span>bge-m3 · Vulkan</span>
+    </div>
+  </section>
+
+  <div class="results-head">
+    <h2>Найдено 20 абзацев</h2>
+    <span class="meta">за 2,2 с · сортировка по релевантности</span>
+  </div>
+
+  <div id="list"></div>
+
+  <div class="note">Это макет: данные — реальный ответ поиска по запросу «любовь Бога», но кнопки ничего не делают.
+  Подсказка: наведите курсор на карточку — появятся действия; сузьте окно — колонки встанут друг под друга.</div>
+</main>
+
+<script>
+const DATA = [
+ {id:"2:5.10", p:["The Nature of God","Природа Бога"], s:["The Love of God","Любовь Бога"], fts:3, sem:2,
+  en:"But the <mark>love of God</mark> is an intelligent and farseeing parental affection. The divine love functions in unified association with divine wisdom and all other infinite characteristics of the perfect nature of the Universal Father. God is love, but love is not God. The greatest manifestation of the divine love for mortal beings is observed in the bestowal of the Thought Adjusters, but your greatest revelation of the Father’s love is seen in the bestowal life of his Son Michael as he lived on earth the ideal spiritual life. It is the indwelling Adjuster who individualizes the <mark>love of God</mark> to each human soul.",
+  ru:"Но <mark>любовь Бога</mark> – это разумное и прозорливое родительское чувство. Божественная любовь проявляется в единстве и взаимодействии с божественной мудростью и всеми остальными бесконечными свойствами совершенной природы Всеобщего Отца. Бог есть любовь, но любовь не есть Бог. Величайшее проявление божественной любви к смертным существам – наделение их Настройщиками Мышления, однако величайшее раскрытие любви Отца на Урантии заключается в посвященческой жизни его Сына Михаила, в прожитой им на земле идеальной духовной жизни. Именно внутренний Настройщик превращает Божью любовь в индивидуальное чувство для каждой человеческой души."},
+ {id:"2:5.12", p:["The Nature of God","Природа Бога"], s:["The Love of God","Любовь Бога"], fts:1, sem:10,
+  en:"When man loses sight of the <mark>love</mark> of a personal <mark>God</mark>, the kingdom of God becomes merely the kingdom of good. Notwithstanding the infinite unity of the divine nature, love is the dominant characteristic of all God’s personal dealings with his creatures.",
+  ru:"Когда человек теряет из вида <mark>любовь</mark> личностного <mark>Бога</mark>, царство Божее превращается всего лишь в царство гожее. Несмотря на бесконечное единство божественной природы, любовь является доминирующим свойством всех личностных отношений Бога со своими созданиями."},
+ {id:"2:6.9", p:["The Nature of God","Природа Бога"], s:["The Goodness of God","Благость Бога"], fts:14, sem:3,
+  en:"Facing the world of personality, God is discovered to be a loving person; facing the spiritual world, he is a personal love; in religious experience he is both. <mark>Love</mark> identifies the volitional will of <mark>God</mark>. The goodness of God rests at the bottom of the divine free-willness—the universal tendency to love, show mercy, manifest patience, and minister forgiveness.",
+  ru:"В мире личности Бог раскрывается как любящая личность; в мире духовном он есть личностная любовь; в религиозном опыте он является и тем, и другим. <mark>Любовь</mark> отождествляется с волеизъявлением <mark>Бога</mark>. Благость Бога лежит в основе божественной свободной воли – всеобщего стремления любить, являть милосердие, проявлять терпение и вершить всепрощение."},
+ {id:"3:2.12", p:["The Attributes of God","Атрибуты Бога"], s:["God’s Infinite Power","Бесконечное могущество Бога"], fts:20, sem:1,
+  en:"1. By the nature of <mark>God</mark>, especially by his infinite <mark>love</mark>, by truth, beauty, and goodness.",
+  ru:"1. Природой <mark>Бога</mark>, в особенности его бесконечной <mark>любовью</mark>, а также истиной, красотой и благостью."}
+];
+const badge = (label, n) => `<span class="badge${n <= 3 ? " top" : ""}" title="Место в списке ${label === "слова" ? "поиска по словам" : "поиска по смыслу"}">${label} №${n}</span>`;
+document.getElementById("list").innerHTML = DATA.map(r => `
+  <article class="result">
+    <div class="r-head">
+      <span class="ref">${r.id}</span>
+      <span class="crumbs"><b>${r.p[1]}</b> · ${r.s[1]}</span>
+      <span class="badges">${badge("слова", r.fts)}${badge("смысл", r.sem)}</span>
+    </div>
+    <div class="texts">
+      <div lang="en"><span class="lang">ENGLISH</span>${r.en}</div>
+      <div lang="ru"><span class="lang">РУССКИЙ</span>${r.ru}</div>
+    </div>
+    <div class="r-actions">
+      <button>Открыть в контексте</button><button>Копировать</button><button>Спросить ИИ об этом абзаце</button>
+    </div>
+  </article>`).join("");
+
+// segmented controls + theme toggle (demo only)
+document.querySelectorAll(".segmented, .nav").forEach(g => g.addEventListener("click", e => {
+  if (e.target.tagName !== "BUTTON") return;
+  g.querySelectorAll("button").forEach(b => b.classList.toggle("on", b === e.target));
+}));
+document.getElementById("theme").onclick = () => {
+  const root = document.documentElement;
+  const dark = root.dataset.theme ? root.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
+  root.dataset.theme = dark ? "light" : "dark";
+};
+</script>
+</body>
+</html>

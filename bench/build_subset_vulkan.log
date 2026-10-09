@@ -1,0 +1,39 @@
+2026-09-26 23:07:55 INFO [smartsearch.index] lowered process priority for indexing
+2026-09-26 23:07:55 INFO [smartsearch.index] build_index start: json=D:\Develop\KU\SmartSearch\bench\subset.json db=D:\Develop\KU\SmartSearch\bench\bge-m3.db model=bge-m3 scheme=D
+2026-09-26 23:07:55 INFO [smartsearch.index] parse_json(D:\Develop\KU\SmartSearch\bench\subset.json): 1572 ok, 0 bad out of 1572
+[bge-m3] parsing 1572/1572 parsed 1572 paragraphs
+[bge-m3] database 0/1572 inserting paragraphs
+[bge-m3] database 0/1572 inserting paragraphs
+[bge-m3] database 1572/1572 paragraphs inserted
+[bge-m3] lemmatize 0/1572 lemmatizing russian text
+[bge-m3] lemmatize 0/1572 lemmatizing russian text
+[bge-m3] lemmatize 1572/1572 lemmatization done
+[bge-m3] fts 0/1572 building full-text index
+[bge-m3] fts 1572/1572 fts index built
+[bge-m3] embedding 0/1572 loading embedding model bge-m3
+[bge-m3] embedding 3144/3144 embedding done
+[bge-m3] finalize 0/1 writing book metadata
+2026-09-26 23:09:26 INFO [smartsearch.index] integrity check: ok=True msg=ok: 1572 paragraphs
+[bge-m3] finalize 1/1 index build complete
+2026-09-26 23:09:26 INFO [smartsearch.index] build_index done in 90.7s: 1572 paragraphs, model=bge-m3, db=D:\Develop\KU\SmartSearch\bench\bge-m3.db
+=== bge-m3 done in 90.7s, 17.3 paras/sec, db size 24.9 MB ===
+2026-09-26 23:09:26 INFO [smartsearch.index] lowered process priority for indexing
+2026-09-26 23:09:26 INFO [smartsearch.index] build_index start: json=D:\Develop\KU\SmartSearch\bench\subset.json db=D:\Develop\KU\SmartSearch\bench\multilingual-e5-base.db model=multilingual-e5-base scheme=D
+2026-09-26 23:09:26 INFO [smartsearch.index] parse_json(D:\Develop\KU\SmartSearch\bench\subset.json): 1572 ok, 0 bad out of 1572
+[multilingual-e5-base] parsing 1572/1572 parsed 1572 paragraphs
+[multilingual-e5-base] database 0/1572 inserting paragraphs
+[multilingual-e5-base] database 0/1572 inserting paragraphs
+[multilingual-e5-base] database 1572/1572 paragraphs inserted
+[multilingual-e5-base] lemmatize 0/1572 lemmatizing russian text
+[multilingual-e5-base] lemmatize 0/1572 lemmatizing russian text
+[multilingual-e5-base] lemmatize 1572/1572 lemmatization done
+[multilingual-e5-base] fts 0/1572 building full-text index
+[multilingual-e5-base] fts 1572/1572 fts index built
+[multilingual-e5-base] embedding 0/1572 loading embedding model multilingual-e5-base
+[multilingual-e5-base] embedding 3144/3144 embedding done
+[multilingual-e5-base] finalize 0/1 writing book metadata
+2026-09-26 23:10:10 INFO [smartsearch.index] integrity check: ok=True msg=ok: 1572 paragraphs
+[multilingual-e5-base] finalize 1/1 index build complete
+2026-09-26 23:10:10 INFO [smartsearch.index] build_index done in 43.8s: 1572 paragraphs, model=multilingual-e5-base, db=D:\Develop\KU\SmartSearch\bench\multilingual-e5-base.db
+=== multilingual-e5-base done in 43.8s, 35.9 paras/sec, db size 23.4 MB ===
+ALL DONE

@@ -1,0 +1,503 @@
+{
+ "status": "draft — needs user review",
+ "corpus": "Paper 0 (Foreword), 171 paragraphs",
+ "method": "relevant ids judged by reading paragraphs, not by keyword grep; binary relevance",
+ "queries": [
+  {
+   "id": "q01",
+   "lang": "en",
+   "type": "definition",
+   "query": "What is the difference between Deity and divinity?",
+   "relevant": [
+    {
+     "id": "0:1.2",
+     "why": "defines Deity, mentions divinity as the way creatures comprehend its unity"
+    },
+    {
+     "id": "0:1.15",
+     "why": "explicitly contrasts: divine is not necessarily Deity"
+    },
+    {
+     "id": "0:1.16",
+     "why": "defines Divinity"
+    },
+    {
+     "id": "0:1.17",
+     "why": "how creatures comprehend divinity"
+    }
+   ]
+  },
+  {
+   "id": "q02",
+   "lang": "ru",
+   "type": "definition",
+   "query": "Что такое божественность?",
+   "relevant": [
+    {
+     "id": "0:1.16",
+     "why": "определение Божественности"
+    },
+    {
+     "id": "0:1.17",
+     "why": "как божественность постигается созданиями"
+    },
+    {
+     "id": "0:1.15",
+     "why": "отношение божественного к Божеству"
+    },
+    {
+     "id": "0:1.18",
+     "why": "совершенная/несовершенная божественность"
+    }
+   ]
+  },
+  {
+   "id": "q03",
+   "lang": "en",
+   "type": "list",
+   "query": "the seven levels on which Deity functions",
+   "relevant": [
+    {
+     "id": "0:1.3",
+     "why": "introduces seven levels"
+    },
+    {
+     "id": "0:1.4",
+     "why": "level 1 static"
+    },
+    {
+     "id": "0:1.5",
+     "why": "level 2 potential"
+    },
+    {
+     "id": "0:1.6",
+     "why": "level 3 associative"
+    },
+    {
+     "id": "0:1.7",
+     "why": "level 4 creative"
+    },
+    {
+     "id": "0:1.8",
+     "why": "level 5 evolutional"
+    },
+    {
+     "id": "0:1.9",
+     "why": "level 6 supreme"
+    },
+    {
+     "id": "0:1.10",
+     "why": "level 7 ultimate"
+    }
+   ]
+  },
+  {
+   "id": "q04",
+   "lang": "ru",
+   "type": "definition",
+   "query": "Как следует понимать слово «Бог» в этих документах?",
+   "relevant": [
+    {
+     "id": "0:2.6",
+     "why": "БОГ как словесный знак"
+    },
+    {
+     "id": "0:2.7",
+     "why": "как термин используется"
+    },
+    {
+     "id": "0:2.9",
+     "why": "по контексту, при сомнении относить к Всеобщему Отцу"
+    },
+    {
+     "id": "0:2.10",
+     "why": "Бог всегда личность"
+    },
+    {
+     "id": "0:2.11",
+     "why": "значения слова БОГ"
+    }
+   ]
+  },
+  {
+   "id": "q05",
+   "lang": "en",
+   "type": "term",
+   "query": "Paradise Trinity",
+   "relevant": [
+    {
+     "id": "0:12.1",
+     "why": "original Paradise Trinity existential"
+    },
+    {
+     "id": "0:12.2",
+     "why": "definition of the Paradise Trinity"
+    },
+    {
+     "id": "0:12.9",
+     "why": "original Trinity potentially infinite"
+    },
+    {
+     "id": "0:1.14",
+     "why": "undivided Deity as in the Paradise Trinity"
+    }
+   ]
+  },
+  {
+   "id": "q06",
+   "lang": "ru",
+   "type": "paraphrase",
+   "query": "союз Отца, Сына и Духа как единое божество",
+   "relevant": [
+    {
+     "id": "0:12.2",
+     "why": "Райская Троица - союз Отца, Сына и Духа"
+    },
+    {
+     "id": "0:12.1",
+     "why": "Райская Троица"
+    },
+    {
+     "id": "0:9.4",
+     "why": "три первых Божества Рая"
+    },
+    {
+     "id": "0:2.12",
+     "why": "Отец/Сын/Дух как Первое, Второе, Третье Лицо (2.12-2.14)"
+    },
+    {
+     "id": "0:2.13",
+     "why": "Сын как Второе Лицо"
+    },
+    {
+     "id": "0:2.14",
+     "why": "Дух как Третье Лицо"
+    }
+   ]
+  },
+  {
+   "id": "q07",
+   "lang": "ru",
+   "type": "cross-lingual",
+   "query": "Настройщик Мышления, божественный дух в человеке",
+   "relevant": [
+    {
+     "id": "0:5.9",
+     "why": "Настройщик как дух, живущий в разуме человека"
+    },
+    {
+     "id": "0:2.3",
+     "why": "Настройщики как частицы Отца"
+    }
+   ]
+  },
+  {
+   "id": "q08",
+   "lang": "en",
+   "type": "concept",
+   "query": "how does the immortal human soul come into being",
+   "relevant": [
+    {
+     "id": "0:5.10",
+     "why": "soul is an experiential acquirement born of indwelling spirit and mortal mind"
+    }
+   ]
+  },
+  {
+   "id": "q09",
+   "lang": "ru",
+   "type": "concept",
+   "query": "Чем личность отличается от тела, разума и души?",
+   "relevant": [
+    {
+     "id": "0:5.11",
+     "why": "личность - ни тело, ни разум, ни дух, ни душа"
+    },
+    {
+     "id": "0:5.4",
+     "why": "личность - дар Отца, не возникает спонтанно"
+    },
+    {
+     "id": "0:5.5",
+     "why": "Отец - тайна наделения личностью"
+    }
+   ]
+  },
+  {
+   "id": "q10",
+   "lang": "en",
+   "type": "concept",
+   "query": "Who is the First Source and Center and how is he related to the universe?",
+   "relevant": [
+    {
+     "id": "0:3.9",
+     "why": "God as First Source and Center primal"
+    },
+    {
+     "id": "0:3.10",
+     "why": "personality of the First Source and Center"
+    },
+    {
+     "id": "0:3.11",
+     "why": "primal in all domains"
+    },
+    {
+     "id": "0:3.12",
+     "why": "relation to the universe introduced"
+    },
+    {
+     "id": "0:3.13",
+     "why": "gravity relation (1st of the list)"
+    }
+   ]
+  },
+  {
+   "id": "q11",
+   "lang": "en",
+   "type": "paraphrase",
+   "query": "everything that exists traces back to one uncaused origin",
+   "relevant": [
+    {
+     "id": "0:2.2",
+     "why": "recognition of a First Cause, only uncaused reality"
+    },
+    {
+     "id": "0:3.23",
+     "why": "all things have a beginning except the ONE UNCAUSED"
+    },
+    {
+     "id": "0:3.11",
+     "why": "nothing exists except in dependence on primacy of First Source"
+    }
+   ]
+  },
+  {
+   "id": "q12",
+   "lang": "en",
+   "type": "concept",
+   "query": "Why is the central Isle motionless and what does it control?",
+   "relevant": [
+    {
+     "id": "0:4.12",
+     "why": "Isle of Paradise is motionless, controls material gravity"
+    },
+    {
+     "id": "0:4.13",
+     "why": "Paradise is a controller, not creator"
+    },
+    {
+     "id": "0:3.13",
+     "why": "gravity converges on nether Paradise"
+    }
+   ]
+  },
+  {
+   "id": "q13",
+   "lang": "ru",
+   "type": "concept",
+   "query": "Три Абсолюта: Божество-Абсолют, Безусловный и Всеобщий",
+   "relevant": [
+    {
+     "id": "0:11.15",
+     "why": "два Абсолюта объединены во Всеобщем"
+    },
+    {
+     "id": "0:11.10",
+     "why": "Всеобщий Абсолют"
+    },
+    {
+     "id": "0:11.3",
+     "why": "действие Всеобщего Абсолюта"
+    },
+    {
+     "id": "0:11.6",
+     "why": "Божество-Абсолют"
+    },
+    {
+     "id": "0:11.7",
+     "why": "Безусловный Абсолют"
+    },
+    {
+     "id": "0:3.18",
+     "why": "два Абсолюта координируются Всеобщим"
+    }
+   ]
+  },
+  {
+   "id": "q14",
+   "lang": "en",
+   "type": "definition",
+   "query": "difference between force, energy and power",
+   "relevant": [
+    {
+     "id": "0:6.2",
+     "why": "how the terms energy, force, power are used"
+    },
+    {
+     "id": "0:6.3",
+     "why": "physical energy"
+    },
+    {
+     "id": "0:6.4",
+     "why": "cosmic force, emergent energy, universe power"
+    },
+    {
+     "id": "0:6.5",
+     "why": "cosmic force"
+    },
+    {
+     "id": "0:6.6",
+     "why": "emergent energy"
+    },
+    {
+     "id": "0:6.7",
+     "why": "universe power"
+    }
+   ]
+  },
+  {
+   "id": "q15",
+   "lang": "ru",
+   "type": "concept",
+   "query": "Что такое эталон и чем он отличается от энергии?",
+   "relevant": [
+    {
+     "id": "0:6.10",
+     "why": "определение эталона"
+    },
+    {
+     "id": "0:6.11",
+     "why": "эталон конфигурирует, но не управляет энергией"
+    },
+    {
+     "id": "0:6.12",
+     "why": "эталон и энергия/личность"
+    },
+    {
+     "id": "0:6.13",
+     "why": "эталон как образец для копий"
+    }
+   ]
+  },
+  {
+   "id": "q16",
+   "lang": "en",
+   "type": "concept",
+   "query": "finite, absonite and absolute levels of reality",
+   "relevant": [
+    {
+     "id": "0:1.11",
+     "why": "finite level"
+    },
+    {
+     "id": "0:1.12",
+     "why": "absonite level"
+    },
+    {
+     "id": "0:1.13",
+     "why": "absolute level"
+    },
+    {
+     "id": "0:4.8",
+     "why": "absolute vs subabsolute: absonites and finites"
+    }
+   ]
+  },
+  {
+   "id": "q17",
+   "lang": "ru",
+   "type": "concept",
+   "query": "Верховное Существо - эволюционирующий Бог времени и пространства",
+   "relevant": [
+    {
+     "id": "0:2.15",
+     "why": "Бог-Верховный как формирующийся Бог времени и пространства"
+    },
+    {
+     "id": "0:7.7",
+     "why": "Бог-Верховный в Хавоне"
+    },
+    {
+     "id": "0:7.8",
+     "why": "Верховное Существо эволюционирует"
+    },
+    {
+     "id": "0:7.9",
+     "why": "роль Верховного Существа"
+    },
+    {
+     "id": "0:7.10",
+     "why": "эволюция конечной реальности под его влиянием"
+    }
+   ]
+  },
+  {
+   "id": "q18",
+   "lang": "en",
+   "type": "paraphrase",
+   "query": "how mortal creatures approach God in seven stages",
+   "relevant": [
+    {
+     "id": "0:8.1",
+     "why": "sevenfold approach to Deity"
+    },
+    {
+     "id": "0:8.9",
+     "why": "sevenfold Deity enables mortal to attain presence of God"
+    },
+    {
+     "id": "0:8.11",
+     "why": "Creator Sons: mortal becomes immortal"
+    },
+    {
+     "id": "0:2.16",
+     "why": "God the Sevenfold"
+    }
+   ]
+  },
+  {
+   "id": "q19",
+   "lang": "ru",
+   "type": "term",
+   "query": "Понятие Я ЕСТЬ как философская уступка конечному разуму",
+   "relevant": [
+    {
+     "id": "0:3.23",
+     "why": "Я ЕСТЬ - философская уступка"
+    },
+    {
+     "id": "0:3.21",
+     "why": "происхождение Реальности с точки зрения создания"
+    },
+    {
+     "id": "0:3.22",
+     "why": "Я ЕСТЬ становится Отцом Сына"
+    }
+   ]
+  },
+  {
+   "id": "q20",
+   "lang": "en",
+   "type": "meta",
+   "query": "purpose of this Foreword and why English words are redefined",
+   "relevant": [
+    {
+     "id": "0:0.1",
+     "why": "statement of purpose: explain meanings of terms"
+    },
+    {
+     "id": "0:0.2",
+     "why": "restricted to English language symbols"
+    },
+    {
+     "id": "0:0.3",
+     "why": "outline of meanings of words"
+    },
+    {
+     "id": "0:0.4",
+     "why": "Foreword as definitive guide"
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,21 @@
+=== multilingual-e5-small ===
+  bs=  8    1.62s  184.69 texts/sec
+  bs= 16    1.00s  300.50 texts/sec
+  bs= 32    1.01s  297.70 texts/sec
+  bs= 64    0.94s  319.40 texts/sec
+=== multilingual-e5-base ===
+  bs=  8    3.08s   97.42 texts/sec
+  bs= 16    2.39s  125.57 texts/sec
+  bs= 32    2.33s  128.85 texts/sec
+  bs= 64    2.41s  124.46 texts/sec
+=== bge-m3 ===
+  bs=  8    7.02s   42.73 texts/sec
+  bs= 16    6.58s   45.56 texts/sec
+  bs= 32    6.55s   45.81 texts/sec
+  bs= 64    6.51s   46.10 texts/sec
+=== qwen3-embedding-0.6b ===
+  bs=  8   19.01s   15.78 texts/sec
+  bs= 16   10.35s   28.98 texts/sec
+  bs= 32   10.08s   29.78 texts/sec
+  bs= 64    9.75s   30.76 texts/sec
+wrote D:\Develop\KU\SmartSearch\bench\profile_vulkan_results.json

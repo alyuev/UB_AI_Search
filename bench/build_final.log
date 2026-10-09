@@ -1,0 +1,36 @@
+2026-09-26 23:39:16 INFO [smartsearch.index] lowered process priority for indexing
+2026-09-26 23:39:16 INFO [smartsearch.index] build_index start: json=D:\Develop\KU\SmartSearch\urantia_bilingual_rag.json db=D:\Develop\KU\SmartSearch\library\urantia\book.db model=bge-m3 scheme=D
+2026-09-26 23:39:16 INFO [smartsearch.index] parse_json(D:\Develop\KU\SmartSearch\urantia_bilingual_rag.json): 14585 ok, 0 bad out of 14585
+parsing 14585/14585 parsed 14585 paragraphs
+database 0/14585 inserting paragraphs
+database 0/14585 inserting paragraphs
+database 2000/14585 inserting paragraphs
+database 4000/14585 inserting paragraphs
+database 6000/14585 inserting paragraphs
+database 8000/14585 inserting paragraphs
+database 10000/14585 inserting paragraphs
+database 12000/14585 inserting paragraphs
+database 14000/14585 inserting paragraphs
+database 14585/14585 paragraphs inserted
+lemmatize 0/14585 lemmatizing russian text
+lemmatize 0/14585 lemmatizing russian text
+lemmatize 2000/14585 lemmatizing russian text
+lemmatize 4000/14585 lemmatizing russian text
+lemmatize 6000/14585 lemmatizing russian text
+lemmatize 8000/14585 lemmatizing russian text
+lemmatize 10000/14585 lemmatizing russian text
+lemmatize 12000/14585 lemmatizing russian text
+lemmatize 14000/14585 lemmatizing russian text
+lemmatize 14585/14585 lemmatization done
+fts 0/14585 building full-text index
+fts 14585/14585 fts index built
+embedding 0/14585 loading embedding model bge-m3
+embedding 2000/29170 embedding en
+embedding 4000/29170 embedding en
+embedding 6000/29170 embedding en
+embedding 8000/29170 embedding en
+embedding 10000/29170 embedding en
+embedding 12000/29170 embedding en
+embedding 14000/29170 embedding en
+embedding 2000/16585 embedding ru
+embedding 4000/18585 embedding ru

@@ -1,0 +1,55 @@
+multilingual-e5-small        cpu_all12_bs8 provider=CPUExecutionProvider     2.71s  110.62 texts/sec
+multilingual-e5-small        cpu_all12_bs16 provider=CPUExecutionProvider     2.84s  105.47 texts/sec
+multilingual-e5-small        cpu_all12_bs32 provider=CPUExecutionProvider     3.15s   95.36 texts/sec
+multilingual-e5-small        cpu_minus2_10_bs8 provider=CPUExecutionProvider     2.65s  113.13 texts/sec
+multilingual-e5-small        cpu_minus2_10_bs16 provider=CPUExecutionProvider     3.44s   87.15 texts/sec
+multilingual-e5-small        cpu_minus2_10_bs32 provider=CPUExecutionProvider     3.68s   81.56 texts/sec
+multilingual-e5-small        gpu_dml_bs8 provider=DmlExecutionProvider    11.33s   26.47 texts/sec
+multilingual-e5-small        gpu_dml_bs16 provider=DmlExecutionProvider     7.62s   39.37 texts/sec
+multilingual-e5-small        gpu_dml_bs32 provider=DmlExecutionProvider     5.67s   52.87 texts/sec
+multilingual-e5-base         cpu_all12_bs8 provider=CPUExecutionProvider     6.87s   43.64 texts/sec
+multilingual-e5-base         cpu_all12_bs16 provider=CPUExecutionProvider     7.36s   40.75 texts/sec
+multilingual-e5-base         cpu_all12_bs32 provider=CPUExecutionProvider     8.23s   36.44 texts/sec
+multilingual-e5-base         cpu_minus2_10_bs8 provider=CPUExecutionProvider     6.79s   44.20 texts/sec
+multilingual-e5-base         cpu_minus2_10_bs16 provider=CPUExecutionProvider     7.79s   38.49 texts/sec
+multilingual-e5-base         cpu_minus2_10_bs32 provider=CPUExecutionProvider     9.31s   32.21 texts/sec
+multilingual-e5-base         gpu_dml_bs8 provider=DmlExecutionProvider    19.09s   15.71 texts/sec
+multilingual-e5-base         gpu_dml_bs16 provider=DmlExecutionProvider    16.42s   18.27 texts/sec
+multilingual-e5-base         gpu_dml_bs32 provider=DmlExecutionProvider    14.88s   20.16 texts/sec
+bge-m3                       cpu_all12_bs8 provider=CPUExecutionProvider    19.76s   15.18 texts/sec
+bge-m3                       cpu_all12_bs16 provider=CPUExecutionProvider    22.62s   13.26 texts/sec
+bge-m3                       cpu_all12_bs32 provider=CPUExecutionProvider    27.24s   11.01 texts/sec
+bge-m3                       cpu_minus2_10_bs8 provider=CPUExecutionProvider    20.19s   14.86 texts/sec
+bge-m3                       cpu_minus2_10_bs16 provider=CPUExecutionProvider    28.35s   10.58 texts/sec
+bge-m3                       cpu_minus2_10_bs32 provider=CPUExecutionProvider    32.94s    9.11 texts/sec
+bge-m3                       gpu_dml_bs8 provider=DmlExecutionProvider    49.26s    6.09 texts/sec
+bge-m3                       gpu_dml_bs16 provider=DmlExecutionProvider    47.46s    6.32 texts/sec
+bge-m3                       gpu_dml_bs32 provider=DmlExecutionProvider    48.25s    6.22 texts/sec
+qwen3-embedding-0.6b         cpu_all12_bs8 provider=CPUExecutionProvider    37.88s    7.92 texts/sec
+qwen3-embedding-0.6b         cpu_all12_bs16 provider=CPUExecutionProvider    39.88s    7.52 texts/sec
+qwen3-embedding-0.6b         cpu_all12_bs32 provider=CPUExecutionProvider    43.61s    6.88 texts/sec
+qwen3-embedding-0.6b         cpu_minus2_10_bs8 provider=CPUExecutionProvider    34.49s    8.70 texts/sec
+qwen3-embedding-0.6b         cpu_minus2_10_bs16 provider=CPUExecutionProvider    39.31s    7.63 texts/sec
+qwen3-embedding-0.6b         cpu_minus2_10_bs32 provider=CPUExecutionProvider    39.96s    7.51 texts/sec
+qwen3-embedding-0.6b         gpu_dml_bs8 provider=DmlExecutionProvider    76.95s    3.90 texts/sec
+qwen3-embedding-0.6b         gpu_dml_bs16 provider=DmlExecutionProvider    52.85s    5.68 texts/sec
+qwen3-embedding-0.6b         gpu_dml_bs32 provider=DmlExecutionProvider    58.15s    5.16 texts/sec
+wrote D:\Develop\KU\SmartSearch\bench\profile_results.json
+{
+  "multilingual-e5-small": {
+    "best_key": "cpu_minus2_10_bs8",
+    "texts_per_sec": 113.13132766201234
+  },
+  "multilingual-e5-base": {
+    "best_key": "cpu_minus2_10_bs8",
+    "texts_per_sec": 44.20227422519718
+  },
+  "bge-m3": {
+    "best_key": "cpu_all12_bs8",
+    "texts_per_sec": 15.183427415010826
+  },
+  "qwen3-embedding-0.6b": {
+    "best_key": "cpu_minus2_10_bs8",
+    "texts_per_sec": 8.698431697674549
+  }
+}

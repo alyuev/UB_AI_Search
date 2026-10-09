@@ -1,0 +1,92 @@
+=== pooling/prefix sanity check ===
+{
+  "bge-m3": {
+    "pooling": "cls",
+    "prefix_query": "",
+    "prefix_passage": ""
+  },
+  "multilingual-e5-base": {
+    "pooling": "mean",
+    "prefix_query": "query: ",
+    "prefix_passage": "passage: "
+  }
+}
+=== cross-lingual pair retrieval: bge-m3 ===
+2026-09-26 23:19:51 INFO [smartsearch.app] loaded 1572 vectors (dim=1024) in 0.15s
+{
+  "ru_full_to_en": {
+    "recall@1": 0.995,
+    "recall@10": 1.0,
+    "mrr": 0.9975,
+    "n": 200
+  },
+  "ru_first_sentence_to_en": {
+    "recall@1": 0.775,
+    "recall@10": 0.83,
+    "mrr": 0.7975797891095775,
+    "n": 200
+  },
+  "en_full_to_ru": {
+    "recall@1": 0.995,
+    "recall@10": 1.0,
+    "mrr": 0.9975,
+    "n": 200
+  },
+  "en_first_sentence_to_ru": {
+    "recall@1": 0.735,
+    "recall@10": 0.835,
+    "mrr": 0.7744703632463154,
+    "n": 200
+  }
+}
+=== cross-lingual pair retrieval: multilingual-e5-base ===
+2026-09-26 23:20:22 INFO [smartsearch.app] loaded 1572 vectors (dim=768) in 0.13s
+{
+  "ru_full_to_en": {
+    "recall@1": 0.99,
+    "recall@10": 1.0,
+    "mrr": 0.9941666666666665,
+    "n": 200
+  },
+  "ru_first_sentence_to_en": {
+    "recall@1": 0.655,
+    "recall@10": 0.81,
+    "mrr": 0.7057365516169163,
+    "n": 200
+  },
+  "en_full_to_ru": {
+    "recall@1": 0.995,
+    "recall@10": 1.0,
+    "mrr": 0.9957142857142857,
+    "n": 200
+  },
+  "en_first_sentence_to_ru": {
+    "recall@1": 0.595,
+    "recall@10": 0.77,
+    "mrr": 0.6497012979914536,
+    "n": 200
+  }
+}
+=== pool bias check (29 original queries) ===
+2026-09-26 23:20:41 INFO [smartsearch.app] loaded 1572 vectors (dim=1024) in 0.12s
+2026-09-26 23:20:41 INFO [smartsearch.app] loaded 1572 vectors (dim=768) in 0.09s
+{
+  "fts": 0.4482758620689655,
+  "semantic_bge": 0.8517241379310344,
+  "semantic_e5": 0.8344827586206897
+}
+=== latency breakdown: bge-m3 ===
+2026-09-26 23:20:46 INFO [smartsearch.app] loaded 1572 vectors (dim=1024) in 0.12s
+{
+  "embed_ms_avg": 30.40750026702881,
+  "matrix_search_ms_avg": 0.8802533149719238,
+  "n": 20
+}
+=== latency breakdown: multilingual-e5-base ===
+2026-09-26 23:20:49 INFO [smartsearch.app] loaded 1572 vectors (dim=768) in 0.08s
+{
+  "embed_ms_avg": 19.73731517791748,
+  "matrix_search_ms_avg": 0.7511258125305176,
+  "n": 20
+}
+wrote D:\Develop\KU\SmartSearch\bench\eval_objective_results.json
