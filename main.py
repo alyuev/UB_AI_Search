@@ -81,8 +81,20 @@ def main():
 
     if "--no-browser" not in sys.argv and not os.environ.get("SMARTSEARCH_NO_BROWSER"):
         threading.Thread(target=open_browser, daemon=True).start()
-    print(f"SmartSearch запущен: {url}")
+    print(f"SmartSearch запускается: {url}", flush=True)
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info"))
+
+    def print_banner():
+        # after uvicorn's own startup lines, so the address is the last thing visible in the window
+        while not server.started and not server.should_exit:
+            time.sleep(0.2)
+        if server.started:
+            line = "=" * 60
+            print("", line, "  SmartSearch работает.", f"  Откройте в браузере:  {url}",
+                  "  Чтобы остановить программу, закройте это окно.", line, "",
+                  sep="\n", flush=True)
+
+    threading.Thread(target=print_banner, daemon=True).start()
     app.state.uvicorn_server = server   # POST /api/restart stops it and sets restart_requested
     server.run()
     if getattr(app.state, "restart_requested", False):
