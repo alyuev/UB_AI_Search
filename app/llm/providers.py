@@ -35,6 +35,10 @@ _TEST_TRANSPORT = None          # tests: an httpx transport (MockTransport) used
 _sleep: Callable[[float], None] = time.sleep
 _now: Callable[[], float] = time.monotonic
 _MODEL_CACHE: dict[str, tuple[float, list[dict]]] = {}
+_ALWAYS_THINKS: dict[tuple[str, str], bool] = {}   # (LM Studio address, model) -> reasoning cannot be switched off
+# An empty reasoning block put at the start of the answer: the model takes its thinking as done and answers at once.
+# The only way to stop the thinking of a model whose LM Studio template allows reasoning «on» only (e.g. Flint).
+NO_THINK_PREFILL = {"role": "assistant", "content": "<think>\n\n</think>\n\n"}
 
 
 class ProviderError(LMStudioError):
@@ -721,7 +725,30 @@ class ProviderClient:
         return {"model": model, "context": self.discover_context(model), "note": None}
 
     # -- chat -----------------------------------------------------------
+    def _always_thinks(self, model: str) -> bool:
+        """LM Studio: the model's reasoning can only be «on» (capabilities.reasoning.allowed_options == ["on"])."""
+        key = (self.native, model)
+        if key not in _ALWAYS_THINKS:
+            try:
+                data = self._get_json(f"{self.native}/api/v1/models", timeout=5)
+                for m in data.get("models") or []:
+                    opts = ((m.get("capabilities") or {}).get("reasoning") or {}).get("allowed_options")
+                    _ALWAYS_THINKS[(self.native, m.get("key"))] = opts == ["on"]
+            except Exception:  # noqa: BLE001 - older LM Studio: leave the request as it is
+                pass
+            _ALWAYS_THINKS.setdefault(key, False)
+        return _ALWAYS_THINKS[key]
+
+    def _with_no_think(self, messages, model, reasoning_effort) -> list:
+        """«Без рассуждения» for a model that ignores reasoning_effort: prefill an empty reasoning block."""
+        if self.kind != "lmstudio" or reasoning_effort != "none" or not model or not self._always_thinks(model):
+            return messages
+        if messages and messages[-1].get("role") == "assistant":
+            return messages
+        return list(messages) + [dict(NO_THINK_PREFILL)]
+
     def _payload(self, messages, model, temperature, max_tokens, reasoning_effort) -> dict:
+        messages = self._with_no_think(messages, model, reasoning_effort)
         p = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens,
              "stream": True}
         if self.kind == "openrouter":
@@ -772,8 +799,8 @@ class ProviderClient:
         statistics (tokens_per_second, time_to_first_token, generation_time). None = not available -> stream."""
         if getattr(self, "_native_failed", False):
             return None
-        body = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": max_tokens,
-                "stream": False}
+        body = {"model": model, "messages": self._with_no_think(messages, model, reasoning_effort),
+                "temperature": temperature, "max_tokens": max_tokens, "stream": False}
         body.update(reasoning_params("lmstudio", reasoning_effort))
         t0 = time.monotonic()
         try:

@@ -243,11 +243,15 @@ NO_ANSWER_MARKER = "нет достаточных данных"
 OVERVIEW_MIN_SECTIONS = 15      # auto mode: a list question whose main word is spread over at least this many sections
 OVERVIEW_MAX_SECTIONS = 150     # more would take too long: the best-matching ones are kept
 OVERVIEW_PART_TOKENS = 9000     # one part (a few sections) of book text per request
+OVERVIEW_THINKING_TOKENS = 6000 # retry budget for a model that always reasons before answering
+OVERVIEW_ANSWER_TOKENS = 12000  # the final merged answer: notes from the whole book make it long
 
 OVERVIEW_MAP_PROMPT = (
     "Ты помогаешь составить полный обзор по книге. Тебе даны вопрос и часть книги — абзацы с номерами в квадратных "
     "скобках. Выпиши из ЭТИХ абзацев всё, что относится к вопросу: каждый эпизод, случай или факт — отдельной "
-    "короткой строкой «- суть [номер]» (номер абзаца, где это сказано; можно несколько). Пиши на языке вопроса. "
+    "короткой строкой: дефис, своими словами что произошло или что сказано, и номер абзаца в квадратных скобках "
+    "(можно несколько). Пример строки: «- Фарисеи обвинили учеников в нарушении субботы за сбор колосьев [147:6.4]». "
+    "Пропускай абзацы, где нет ничего по вопросу. Пиши на языке вопроса. "
     "Только то, что есть в абзацах, ничего от себя. Помни, что о том же может говориться другими словами "
     "(например, «шпионы» вместо «фарисеи»). Если в этой части нет ничего по вопросу — ответь одним словом НЕТ."
 )
@@ -771,22 +775,45 @@ class RagPipeline:
         t0 = time.monotonic()
         notes: list[str] = []
         failed = 0
+        thinking_only = 0   # parts where the model spent every token on reasoning and wrote nothing
+        stopped = ""
         for i, part in enumerate(parts, 1):
             first, last = part[0]["id"], part[-1]["id"]
             report("generation", 0, 1, f"Обзор: часть {i} из {len(parts)} ({first} … {last}) · {title} · {self.model}")
             msgs = [{"role": "system", "content": OVERVIEW_MAP_PROMPT},
                     {"role": "user", "content": f"Вопрос: {question}\n\nАбзацы книги:\n{build_context_block(part, lang)}"}]
-            try:
-                txt = self.llm.chat(msgs, model=self.model, temperature=0.1, max_tokens=900,
-                                    timeout=self.timeout, reasoning_effort="none")
-            except Exception as exc:  # noqa: BLE001 - one bad part must not lose the others
-                logger_rag.warning("overview part %d failed: %s", i, exc)
+            txt = ""
+            # a model that always thinks first (it ignores «reasoning off») may use up a small budget on thinking
+            for budget in (900, OVERVIEW_THINKING_TOKENS):
+                try:
+                    txt, st = self.llm.chat_with_stats(msgs, model=self.model, temperature=0.1, max_tokens=budget,
+                                                       timeout=self.timeout, reasoning_effort="none")
+                except Exception as exc:  # noqa: BLE001 - one bad part must not lose the others
+                    logger_rag.warning("overview part %d failed: %s", i, exc)
+                    txt, st = None, None
+                    break
+                txt = (txt or "").strip() if isinstance(txt, str) else ""
+                if txt or getattr(st, "stop_reason", None) != "length":
+                    break
+                report("generation", 0, 1, f"Обзор: часть {i} из {len(parts)} — модель израсходовала {budget} токенов на "
+                                           f"рассуждения и ничего не написала; повтор с запасом {OVERVIEW_THINKING_TOKENS}…")
+            if txt is None:
                 failed += 1
                 continue
-            txt = (txt or "").strip() if isinstance(txt, str) else ""
+            if not txt and getattr(st, "stop_reason", None) == "length":
+                failed += 1
+                thinking_only += 1
+                if not notes and thinking_only >= 2:   # it will not get better on the next parts: stop early
+                    stopped = (f"Модель «{self.model}» тратит все токены на рассуждения и не выдаёт ответ "
+                               f"(даже при запасе {OVERVIEW_THINKING_TOKENS} токенов). Для обзора выберите модель, "
+                               f"которая умеет отвечать без обязательного рассуждения.")
+                    break
+                continue
             if txt and not re.fullmatch(r"\W*нет\W*", txt.lower()):
                 notes.append(txt)
         timings["overview_parts_s"] = round(time.monotonic() - t0, 2)
+        if stopped:
+            failed = len(parts)
 
         plan_out = {**(plan or {"keywords_ru": [], "keywords_en": [], "semantic_query": ""}),
                     "summary": merged["summary"] if merged else (plan_summary(plan) if plan else ""),
@@ -800,7 +827,7 @@ class RagPipeline:
         base = {"sources": all_paras, "plan": plan_out, "candidates": {"fts": n_par, "semantic": 0},
                 "overview": ov_info, "prompt_warnings": self.prompts.warnings}
         if not notes:
-            msg = ("Не удалось получить ответ ни по одной части книги." if failed == len(parts)
+            msg = (stopped or "Не удалось получить ответ ни по одной части книги." if failed == len(parts)
                    else "В найденных разделах модель не нашла ничего по вопросу. " + NO_ANSWER_MARKER.capitalize() + ".")
             return {**base, "answer": msg if failed < len(parts) else None,
                     "error": msg if failed == len(parts) else None, "cited_ids": [], "unknown_citations": [],
@@ -809,6 +836,8 @@ class RagPipeline:
 
         user_message = OVERVIEW_REDUCE_TEMPLATE.format(question=question, notes="\n".join(notes))
         messages = [{"role": "system", "content": self.system_prompt}, {"role": "user", "content": user_message}]
+        # what is left of the model's window after the notes (a small window must not make the request fail)
+        room = max(1000, self.max_context_length - estimate_tokens(self.system_prompt + user_message) - 300)
         report("generation", 0, 1, f"Обзор: сводный ответ по {len(notes)} частям · {title} · {self.model}")
         gen_t0 = time.monotonic()
         last = [0.0]
@@ -824,7 +853,7 @@ class RagPipeline:
         try:
             answer_text, stats = self.llm.chat_with_stats(
                 messages, model=self.model, temperature=self.temperature,
-                max_tokens=max(self.max_tokens, 3000), timeout=self.timeout,
+                max_tokens=max(self.max_tokens, min(OVERVIEW_ANSWER_TOKENS, room)), timeout=self.timeout,
                 reasoning_effort=self.reasoning_effort, on_delta=on_delta)
         except LMStudioError as exc:
             partial = getattr(exc, "partial", None)

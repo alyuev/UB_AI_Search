@@ -87,3 +87,32 @@ def test_control_question(book, case):
         words = {w.lower() for lst in st.values() for w in lst}
         bad = [w for w in case["terms_absent"] if w in words]
         assert not bad, f"в поиск попали лишние слова: {bad}"
+
+
+class _LengthStats(_Stats):
+    stop_reason = "length"
+
+
+class ThinkingOnlyLLM(PlanLLM):
+    """Like recursivesi/flint on a long part: every token goes to reasoning, the answer stays empty."""
+
+    def __init__(self, plan: dict):
+        super().__init__(plan)
+        self.calls = 0
+
+    def chat_with_stats(self, messages, model, **kw):
+        self.calls += 1
+        return "", _LengthStats()
+
+
+def test_overview_with_a_model_that_only_thinks(book):
+    """An empty answer is not «nothing found»: the overview stops early and says why."""
+    conn, searcher = book
+    case = next(c for c in CASES if c["id"] == "pharisees")
+    llm = ThinkingOnlyLLM(case["plan"])
+    pipe = RagPipeline(searcher, llm, model="flint", max_context_length=CONTEXT,
+                       options=opts_mod.effective(config.load_settings()), conn=conn, query_rewrite=True)
+    res = pipe.answer(case["question"], overview=True)
+    assert res["error"] and "рассуждения" in res["error"]
+    assert "нет достаточных данных" not in (res.get("answer") or "").lower()
+    assert llm.calls == 4   # two parts, each tried twice, then it stops
