@@ -400,7 +400,10 @@ async function loadTaskLlmUi() {
       <div class="set-label">${escapeHtml(label)}</div>
       <div class="set-field"><select data-tprov>${opts(st["llm_provider_" + t] || "")}</select>
         <input type="text" data-tmodel list="tm-list-${t}" placeholder="модель (пусто — выбранная у провайдера)" value="${escapeHtml(st["llm_model_" + t] || "")}" />
-        <datalist id="tm-list-${t}"></datalist><div class="field-err"></div></div></div>`).join("") + `</div>
+        <datalist id="tm-list-${t}"></datalist><div class="field-err"></div></div></div>`).join("") + `
+      <div class="set-row"><div class="set-label">Не показывать в списке на главной</div>
+        <div class="set-field"><textarea id="hidden-models" rows="3" placeholder="по одной модели в строке">${escapeHtml((st.llm_hidden_models || []).join("\n"))}</textarea>
+        <div class="hint-text">Модели эмбеддингов, OCR и генерации картинок скрываются сами; здесь — то, что ещё не нужно видеть.</div></div></div></div>
     <div class="set-actions"><button type="button" id="save-task-llm-btn">Сохранить</button><span id="task-llm-status" class="save-status"></span></div>`;
   $$("#task-llm-root .set-row[data-task]").forEach((row) => {
     // the model list is fetched only when the user focuses the field (no automatic requests to a cloud provider)
@@ -426,6 +429,7 @@ async function saveTaskLlm() {
     payload["llm_provider_" + row.dataset.task] = row.querySelector("[data-tprov]").value;
     payload["llm_model_" + row.dataset.task] = row.querySelector("[data-tmodel]").value.trim();
   });
+  payload.llm_hidden_models = $("#hidden-models").value.split("\n").map((x) => x.trim()).filter(Boolean);
   try {
     await api("/api/settings", jsonPost("POST", payload));
     setStatus(st, "✓ Сохранено", "ok");
@@ -433,27 +437,90 @@ async function saveTaskLlm() {
   } catch (e) { setStatus(st, "✗ " + e.message, "err"); }
 }
 
-// ---------------------------------------------- значок «Локально / Облако» ---
-async function refreshLlmBadge() {
+// ------------------------------ значок «Локально / Облако» со списком моделей ---
+let badgeCtx = null;   // { main, act, st, models } of the last drawn badge
+
+async function refreshLlmBadge(refresh = false) {
   const el = $("#llm-badge");
   if (!el) return;
+  let pv, st;
   try {
-    const [pv, st] = await Promise.all([api("/api/llm/providers"), api("/api/settings")]);
-    const byId = Object.fromEntries(pv.providers.map((p) => [p.id, p]));
-    const act = byId[pv.active];
-    const taskProv = (t) => byId[st["llm_provider_" + t] || ""] || act;
-    const main = taskProv("rag");
-    const model = st["llm_model_rag"] || (main.id === pv.active ? st.llm_model : "") || main.default_model || "модель не выбрана";
-    const others = ["translation", "rewrite"].filter((t) => taskProv(t).is_cloud && !main.is_cloud).map((t) => t === "translation" ? "перевод" : "подготовка запроса");
-    const blocked = [main, taskProv("translation"), taskProv("rewrite")].some((p) => p.is_cloud) && !pv.allow_cloud_llm;
-    el.classList.remove("hidden", "cloud", "local", "blocked");
-    if (blocked) { el.classList.add("blocked"); el.textContent = "⚠ Облачный провайдер выбран, но облачные модели выключены"; }
-    else if (main.is_cloud) { el.classList.add("cloud"); el.textContent = `☁ Облако: ${main.name} · ${model}`; }
-    else {
-      el.classList.add(others.length ? "cloud" : "local");
-      el.textContent = `🖥 Локально` + (model ? ` · ${model}` : "") + (others.length ? ` (в облаке: ${others.join(", ")})` : "");
+    [pv, st] = await Promise.all([api("/api/llm/providers"), api("/api/settings")]);
+  } catch (e) { el.classList.add("hidden"); return; }
+  const byId = Object.fromEntries(pv.providers.map((p) => [p.id, p]));
+  const act = byId[pv.active];
+  const taskProv = (t) => byId[st["llm_provider_" + t] || ""] || act;
+  const main = taskProv("rag");
+  const model = st["llm_model_rag"] || (main.id === pv.active ? st.llm_model : "") || main.default_model || "";
+  const others = ["translation", "rewrite"].filter((t) => taskProv(t).is_cloud && !main.is_cloud).map((t) => t === "translation" ? "перевод" : "подготовка запроса");
+  const blocked = [main, taskProv("translation"), taskProv("rewrite")].some((p) => p.is_cloud) && !pv.allow_cloud_llm;
+  el.classList.remove("hidden", "cloud", "local", "idle", "blocked");
+  el.title = main.is_cloud ? `Тексты абзацев и вопросы отправляются на сервер ${main.host}` : "Тексты остаются на этом компьютере";
+  if (blocked) { el.classList.add("blocked"); el.textContent = "⚠ Облачный провайдер выбран, но облачные модели выключены"; return; }
+
+  let models = null;
+  try {
+    const r = await api(`/api/llm/models?provider=${encodeURIComponent(main.id)}&text_only=true${refresh ? "&refresh=true" : ""}`);
+    models = r.models || [];
+  } catch (e) { models = null; }   // the program/service is not reachable: show the name only
+  badgeCtx = { main, act, st, models };
+
+  const prefix = main.is_cloud ? `☁ Облако: ${main.name}` : "🖥 Локально";
+  const suffix = others.length ? ` (в облаке: ${others.join(", ")})` : "";
+  if (!models || !models.length) {
+    el.classList.add(main.is_cloud || others.length ? "cloud" : "local");
+    el.textContent = `${prefix} · ${model || "модель не выбрана"}${suffix}`;
+    return;
+  }
+  const list = models.slice();
+  if (model && !list.some((m) => m.id === model)) list.unshift({ id: model, missing: true });
+  const opt = (m) => {
+    const label = (m.loaded ? "● " : "") + m.id + (m.loaded ? " — загружена" : m.missing ? " — нет в списке" : "");
+    return `<option value="${escapeHtml(m.id)}" class="${m.loaded ? "m-loaded" : ""}"${m.id === model ? " selected" : ""}>${escapeHtml(label)}</option>`;
+  };
+  el.innerHTML = `<span class="llm-badge-pre">${escapeHtml(prefix)} ·</span><select id="llm-model-select" title="Модель для ответов на вопросы и анализа перевода">${list.map(opt).join("")}</select>${suffix ? `<span>${escapeHtml(suffix)}</span>` : ""}`;
+  const cur = list.find((m) => m.id === model);
+  // green = the model is already in memory (local); a model that is not loaded yet will be loaded on the first query
+  const loaded = !main.is_cloud && cur && cur.loaded;
+  el.classList.add(main.is_cloud || others.length ? "cloud" : loaded || cur?.loaded === null ? "local" : "idle");
+  if (!main.is_cloud && cur && cur.loaded === false) el.title = "Модель ещё не загружена в память: LM Studio загрузит её при первом запросе (это займёт время)";
+  const sel = $("#llm-model-select");
+  sel.addEventListener("change", () => chooseBadgeModel(sel.value));
+}
+
+// The picked model becomes the model of «Ответ на вопрос» and «Анализ перевода» (when they use the same provider).
+async function chooseBadgeModel(modelId) {
+  if (!badgeCtx) return;
+  const { main, act, st } = badgeCtx;
+  const payload = {};
+  for (const t of ["rag", "translation"]) {
+    const prov = st["llm_provider_" + t] || act.id;
+    if (prov !== main.id) continue;
+    if (!st["llm_model_" + t] && main.id === act.id) payload.llm_model = modelId;
+    else payload["llm_model_" + t] = modelId;
+  }
+  try {
+    await api("/api/settings", jsonPost("POST", payload));
+  } catch (e) { alert("Не удалось сменить модель: " + e.message); refreshLlmBadge(); return; }
+  if (main.kind === "lmstudio") await switchLmStudioModel(main.id, modelId);
+  refreshLlmBadge();
+}
+
+// LM Studio: unload the previous model and load the chosen one; progress is shown in the badge
+async function switchLmStudioModel(pid, modelId) {
+  const el = $("#llm-badge");
+  const show = (text) => { el.classList.remove("local", "idle", "cloud", "blocked"); el.classList.add("idle"); el.textContent = "⏳ " + text; };
+  show(`Смена модели на «${modelId}»…`);
+  try {
+    const { job_id } = await api("/api/llm/switch-model", jsonPost("POST", { provider: pid, model: modelId }));
+    if (!job_id) return;
+    for (;;) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const job = await api(`/api/jobs/${job_id}`);
+      if (job.message) show(job.message);
+      if (job.status === "done") return;
+      if (job.status === "error" || job.status === "cancelled") throw new Error(job.error || "задача прервана");
     }
-    el.title = main.is_cloud ? `Тексты абзацев и вопросы отправляются на сервер ${main.host}` : "Тексты остаются на этом компьютере";
-  } catch (e) { el.classList.add("hidden"); }
+  } catch (e) { alert("LM Studio не смог сменить модель: " + e.message); }
 }
 refreshLlmBadge();

@@ -543,6 +543,15 @@ button.link-btn:disabled { color: var(--text-muted); text-decoration: none; }
 .llm-badge { padding: 4px 12px; border-radius: 999px; font-size: 13px; font-weight: 600; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .llm-badge.local { background: color-mix(in srgb, var(--ok) 14%, var(--bg-card)); color: var(--ok); }
 .llm-badge.cloud { background: color-mix(in srgb, var(--warn) 22%, var(--bg-card)); color: var(--warn); border: 1px solid var(--warn); }
+.llm-badge.idle { background: var(--bg-card); color: var(--text-muted, inherit); border: 1px solid var(--border, #ccc); }
+.llm-badge { display: inline-flex; align-items: center; gap: 4px; }
+.llm-badge-pre { flex: none; }
+#llm-model-select { background: transparent; color: inherit; font: inherit; border: none; padding: 0 2px; max-width: 340px; cursor: pointer; text-overflow: ellipsis; }
+#llm-model-select option { color: var(--text, #222); background: var(--bg-card, #fff); font-weight: 400; }
+#llm-model-select option.m-loaded { color: var(--ok); font-weight: 600; }
+.model-line { margin: 0 0 10px; font-size: 13px; color: var(--ok); }
+.model-line.cloud { color: var(--warn); }
+.h-model { font-size: 12px; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .llm-badge.blocked { background: color-mix(in srgb, var(--err) 14%, var(--bg-card)); color: var(--err); }
 .h-cloud { margin-left: 6px; color: var(--warn); }
 .cloud-box { border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 14px; font-size: 14px; display: flex; flex-direction: column; gap: 8px; background: var(--bg); }

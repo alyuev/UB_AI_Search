@@ -1,0 +1,73 @@
+{
+  "_about": "Контрольные вопросы (docs/control_questions.md). plan - план поиска, как его обычно выдаёт модель при подготовке запроса; must - абзацы, которые обязаны попасть к модели (все); any - хотя бы один из списка; overview - должен ли включиться «обзор по всей книге»; known_fail - причина, если вопрос пока не проходит.",
+  "questions": [
+    {
+      "id": "eve",
+      "question": "сколько прожила Ева?",
+      "plan": {"keywords_ru": ["Ева", "смерть Евы", "Адам"], "keywords_en": ["Eve", "death of Eve", "Adam"],
+               "semantic_query": "сколько лет прожила Ева", "answer_type": "other", "main_ru": "Ева", "main_en": "Eve"},
+      "must": ["76:5.5"]
+    },
+    {
+      "id": "eden_edentia",
+      "question": "какая связь между эдемом и эдемией?",
+      "plan": {"keywords_ru": ["эдем", "эдемия"], "keywords_en": ["Eden", "Edentia"],
+               "semantic_query": "связь между Эдемом и Эдемией", "answer_type": "other", "main_ru": "", "main_en": ""},
+      "any": ["51:3.2", "73:4.1", "43:6.2", "73:6.6"],
+      "terms_absent": ["отек", "отёк", "edema"]
+    },
+    {
+      "id": "ukraine",
+      "question": "упоминаются ли Украина или украинцы?",
+      "plan": {"keywords_ru": ["Украина", "украинцы"], "keywords_en": ["Ukraine", "Ukrainians"],
+               "semantic_query": "упоминание Украины и украинцев", "answer_type": "other", "main_ru": "Украина", "main_en": "Ukraine"},
+      "must": ["80:9.6"]
+    },
+    {
+      "id": "council24",
+      "question": "перечисли участников совета двадцати четырех",
+      "plan": {"keywords_ru": ["совет двадцати четырех", "участник"], "keywords_en": ["council of twenty-four", "member"],
+               "semantic_query": "члены совета двадцати четырех", "answer_type": "list", "main_ru": "", "main_en": ""},
+      "must": ["45:4.2", "45:4.3", "45:4.4", "45:4.5", "45:4.6", "45:4.7", "45:4.8", "45:4.9", "45:4.10", "45:4.11",
+               "45:4.12", "45:4.13", "45:4.14", "45:4.15", "45:4.16", "45:4.17", "45:4.18"],
+      "overview": false
+    },
+    {
+      "id": "pharisees",
+      "question": "Какие были конфликты или споры Иисуса с фарисеями?",
+      "plan": {"keywords_ru": ["Иисус", "фарисеи", "конфликт", "спор"], "keywords_en": ["Jesus", "Pharisees", "conflict", "controversy"],
+               "semantic_query": "конфликты и споры Иисуса с фарисеями", "answer_type": "list", "main_ru": "Иисус", "main_en": "Jesus"},
+      "must": ["147:6.4", "147:7.2"],
+      "overview": true
+    },
+    {
+      "id": "agondonters",
+      "question": "кто такие агондонтеры?",
+      "plan": {"keywords_ru": ["агондонтеры"], "keywords_en": ["agondonters"],
+               "semantic_query": "кто такие агондонтеры", "answer_type": "other", "main_ru": "агондонтер", "main_en": "agondonters"},
+      "terms_absent": ["кто", "такие"]
+    },
+    {
+      "id": "andromeda",
+      "question": "Какое расстояние до галактики Андромеды и в каком направлении?",
+      "plan": {"keywords_ru": ["Андромеда", "расстояние", "галактика"], "keywords_en": ["Andromeda", "distance", "galaxy"],
+               "semantic_query": "расстояние до галактики Андромеды", "answer_type": "other", "main_ru": "Андромеда", "main_en": "Andromeda"},
+      "must": ["15:4.7"]
+    },
+    {
+      "id": "genes",
+      "question": "сколько генов у человека?",
+      "plan": {"keywords_ru": ["ген", "человек"], "keywords_en": ["gene", "human"],
+               "semantic_query": "число генов у человека", "answer_type": "other", "main_ru": "ген", "main_en": "gene"},
+      "must": ["36:2.11"]
+    },
+    {
+      "id": "new_creatures",
+      "question": "кто создает новые живые создания?",
+      "plan": {"keywords_ru": ["создание", "жизнь", "Носители Жизни"], "keywords_en": ["creature", "life", "Life Carriers"],
+               "semantic_query": "кто создаёт новые живые существа", "answer_type": "other", "main_ru": "", "main_en": ""},
+      "must": ["36:0.1", "21:2.4", "21:2.5"],
+      "any": ["65:1.7", "42:1.5"]
+    }
+  ]
+}

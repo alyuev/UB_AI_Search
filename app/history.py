@@ -67,6 +67,10 @@ def _row(r: sqlite3.Row, with_result: bool = False) -> dict:
     keys = r.keys()
     if "has_experiment" in keys:
         d["has_experiment"] = bool(r["has_experiment"])
+    if "llm_model" in keys:
+        d["llm_model"] = r["llm_model"] or ""
+    if "tps" in keys:
+        d["tps"] = r["tps"]
     if with_result:
         d["result"] = json.loads(r["result"]) if r["result"] else None
         d["experiment"] = json.loads(r["experiment"]) if r["experiment"] else None
@@ -129,7 +133,11 @@ def list_entries(mode: Optional[str] = None, q: Optional[str] = None, book: Opti
         total = conn.execute(f"SELECT COUNT(*) FROM history{clause}", args).fetchone()[0]
         rows = conn.execute(
             "SELECT id, created_at, book_id, mode, query, params, NULL AS result, NULL AS experiment, summary, duration_s, "
-            "status, pinned, rating, note, (experiment IS NOT NULL) AS has_experiment "
+            "status, pinned, rating, note, (experiment IS NOT NULL) AS has_experiment, "
+            # the LLM that answered (a backup model if it took over), also for entries saved before this field
+            "CASE WHEN json_valid(result) THEN COALESCE(json_extract(result, '$.answered_model'), "
+            "json_extract(result, '$.provider.model')) END AS llm_model, "
+            "CASE WHEN json_valid(experiment) THEN json_extract(experiment, '$.stats.tokens_per_sec') END AS tps "
             f"FROM history{clause} ORDER BY {order} LIMIT ? OFFSET ?",
             args + [max(1, min(limit, 500)), max(0, offset)]).fetchall()
         return {"items": [_row(r) for r in rows], "total": total}

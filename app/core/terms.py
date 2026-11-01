@@ -446,6 +446,7 @@ class SearchTerms:
         self.en_exact: list[str] = []
         self.en_prefix: list[str] = []
         self.en_phrases: list[str] = []
+        self.required: Optional["SearchTerms"] = None   # «главное слово»: a paragraph must contain one of these
 
     @staticmethod
     def _add(lst: list, v: str) -> None:
@@ -488,11 +489,17 @@ class SearchTerms:
             parts.append("{" + " ".join(ru_c) + "} : (" + " OR ".join(ru_items) + ")")
         if en_items and en_c:
             parts.append("{" + " ".join(en_c) + "} : (" + " OR ".join(en_items) + ")")
-        return " OR ".join(parts) if parts else '""'
+        if not parts:
+            return '""'
+        base = " OR ".join(parts)
+        if self.required is not None and not self.required.empty():
+            return f"({self.required.fts_match(cols)}) AND ({base})"
+        return base
 
 
 SUGGEST_MIN_JW = 0.85        # «did you mean» only for really similar words (same first 3 letters)
 FREQUENT_SHARE = 0.02        # a term in more than 2% of paragraphs is too common to select by
+REQUIRED_MIN_HITS = 3        # «главное слово» rarer than this would leave almost nothing to search in
 
 
 def _stem(lemma: str) -> str:
@@ -915,9 +922,95 @@ class TermTools:
         for t in terms:
             if not t.get("too_common"):
                 add_to_search(t)
+        required = self._required(terms, plan, limit)
+        if required.get("search") is not None:
+            st.required = required.pop("search")
+            status_extra.append(f"★ Главное слово: {required['display']} — {paragraphs_word(required['hits'])}, "
+                                f"поиск по словам только среди них ({required['by']}"
+                                + (f"; {required['reason']}" if required.get("reason") else "") + ")")
+        elif required.get("reason"):
+            status_extra.append(f"Главное слово не используется: {required['reason']}")
         return {"search": st, "terms": terms, "lines": self.status_lines(terms) + status_extra,
+                "required": required,
                 "dropped": [m["text"] for m in model_terms if not m["ok"]],
                 "model_all_missing": model_all_missing}
+
+    # -- «главное слово» ---------------------------------------------------------
+    def _is_actor(self, t: dict) -> bool:
+        """A Russian noun for a person / group / name (фарисей, апостол, Адам) - safe to require."""
+        if t.get("lang") != "ru" or t.get("phrase"):
+            return False
+        try:
+            tags = [str(p.tag) for p in self.morph.parse(t["surface"])[:2]]
+        except Exception:  # noqa: BLE001
+            return False
+        return any("NOUN" in tg and ("anim" in tg.replace("inan", "") or "Name" in tg or "Surn" in tg or "Geox" in tg)
+                   for tg in tags)
+
+    def _required(self, terms: list[dict], plan: Optional[dict], limit: float) -> dict:
+        """The word every paragraph of the word search must contain. Chosen by the model (main_ru/main_en of the
+        plan) and checked here; without a usable choice - the program's own: the rarest «actor» word of the
+        question. Returns {"display", "hits", "by", "search": SearchTerms} or {"reason"} / {} (nothing to say)."""
+        def bad(t: Optional[dict]) -> str:
+            if t is None or not t.get("ok"):
+                return "его нет в книге"
+            if t.get("too_common") or (limit and t["hits"] > limit):
+                return f"оно слишком частое ({paragraphs_word(t['hits'])})"
+            if t["hits"] < REQUIRED_MIN_HITS:
+                return f"оно слишком редкое ({paragraphs_word(t['hits'])})"
+            return ""
+
+        def find(word: str) -> Optional[dict]:
+            w = word.strip()
+            if not w:
+                return None
+            if " " not in w and self._is_meta_word(w):
+                return None
+            lang = "ru" if is_cyrillic(w) else "en"
+            key = self.ru_lemma(w.lower()) if lang == "ru" and " " not in w else w.lower()
+            for t in terms:
+                if t["lang"] == lang and t["key"].replace("ё", "е") == key.replace("ё", "е"):
+                    return t
+            return self.check_word(w, src="model")
+
+        chosen, by, reason = None, "", ""
+        main_ru = (plan or {}).get("main_ru") or ""
+        main_en = (plan or {}).get("main_en") or ""
+        if main_ru or main_en:
+            t = find(main_ru) if main_ru else None
+            if t is None or bad(t):
+                t = find(main_en) if main_en else t
+            why = bad(t)
+            if why:
+                reason = f"модель предложила «{main_ru or main_en}», но {why}"
+            else:
+                chosen, by = t, "выбрала модель"
+        if chosen is None:
+            actors = [t for t in terms if t["src"] == "user" and not bad(t) and self._is_actor(t)]
+            if actors:
+                chosen, by = min(actors, key=lambda t: t["hits"]), "выбрала программа"
+        if chosen is None:
+            return {"reason": reason} if reason else {}
+        # the word itself + its translations already in the search (glossary / the model's other-language form)
+        name = chosen.get("display") or chosen["text"]
+        group = [chosen] + [t for t in terms if t is not chosen and t.get("ok") and not t.get("phrase")
+                            and (t.get("from") == name
+                                 or any(e["key"] == t["key"] for e in chosen.get("equiv") or []))]
+        other = find(main_en if chosen["lang"] == "ru" else main_ru) if by == "выбрала модель" else None
+        if other is not None and not bad(other) and all(other is not g for g in group):
+            group.append(other)
+        req = SearchTerms()
+        for t in group:
+            add = req.add_ru if t["lang"] == "ru" else req.add_en
+            add(exact=t["key"], prefix=t.get("prefix") or "")
+        hits = self.count_hits(req)
+        if hits < REQUIRED_MIN_HITS:
+            return {"reason": f"«{name}» оставляет слишком мало абзацев"}
+        names = list(dict.fromkeys((t.get("display") or t["text"]) for t in group))
+        out = {"display": " / ".join(names), "hits": hits, "by": by, "search": req}
+        if reason:
+            out["reason"] = reason
+        return out
 
     @staticmethod
     def status_lines(terms: list[dict]) -> list[str]:

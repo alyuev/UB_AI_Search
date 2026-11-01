@@ -610,6 +610,7 @@ class RagJobRequest(BaseModel):
     question: str
     k: Optional[int] = None          # None -> the «сколько абзацев передавать» setting
     replay: Optional[int] = None     # history entry id: re-run with EXACTLY the saved prompts/parameters
+    overview: Optional[bool] = None  # True - «Обзор по всей книге»; None - the program decides
 
 
 def _replay_setup(settings: dict, replay_id: int, mode: str) -> tuple[dict, "prompts_mod.ResolvedPrompts", str]:
@@ -718,7 +719,7 @@ def api_job_rag(req: RagJobRequest):
         t_start = time.monotonic()
         # replay: the saved k; otherwise the request's k, else the «сколько абзацев» setting
         k_eff = options["rag_top_k"] if req.replay is not None else (req.k or options["rag_top_k"])
-        result = pipeline.answer(req.question, k=k_eff, progress=progress)
+        result = pipeline.answer(req.question, k=k_eff, progress=progress, overview=req.overview)
         result["model_note"] = resolved["note"]
         result["replay_note"] = replay_note
         result["provider"] = _provider_snapshot(settings, prof, resolved["model"], result.get("stats"))
@@ -731,11 +732,12 @@ def api_job_rag(req: RagJobRequest):
             raise RuntimeError(result["error"])
         n_cited = len(result.get("cited_ids") or [])
         _record_history(
-            "rag", req.question, {"k": k_eff, "replay": req.replay, **_cloud_params(result)},
+            "rag", req.question, {"k": k_eff, "replay": req.replay, **_cloud_params(result),
+                                  **({"overview": True} if result.get("overview") else {})},
             {**{k: result.get(k) for k in ("answer", "cited_ids", "unknown_citations", "no_answer", "has_inference",
                                           "plan", "candidates", "stats_summary", "model_note", "prompt_warnings",
                                           "warnings", "provider", "truncated", "error", "answered_model",
-                                          "fallback_note")},
+                                          "fallback_note", "overview")},
              "sources": _compact(result.get("sources") or [])},
             "ответ оборван на середине" if partial else
             "в книге нет данных для ответа" if result.get("no_answer")
@@ -926,6 +928,9 @@ def _check_basic_settings(p: dict) -> None:
     for key in ("openrouter_referer", "openrouter_title"):
         if key in p and (not isinstance(p[key], str) or len(p[key]) > 200 or "\n" in p[key]):
             raise HTTPException(400, "Заголовок OpenRouter: строка до 200 символов")
+    if "llm_hidden_models" in p and not (isinstance(p["llm_hidden_models"], list)
+                                         and all(isinstance(x, str) for x in p["llm_hidden_models"])):
+        raise HTTPException(400, "Скрытые модели: ожидается список названий")
     if "fts_stopwords" in p and not isinstance(p["fts_stopwords"], bool):
         raise HTTPException(400, "Стоп-слова в поиске: ожидается «вкл» или «выкл»")
     if "prompt_preset" in p and p["prompt_preset"] is not None and not isinstance(p["prompt_preset"], str):
@@ -1207,9 +1212,32 @@ def api_llm_check(provider: Optional[str] = None):
         return {"ok": False, "message": exc.detail}
 
 
+class SwitchModelRequest(BaseModel):
+    provider: Optional[str] = None
+    model: str
+
+
+@app.post("/api/llm/switch-model")
+def api_llm_switch_model(req: SwitchModelRequest):
+    """LM Studio: unload the current model and load the chosen one (as a job: loading takes a while)."""
+    client = _client_or_error(req.provider)
+    if getattr(client, "kind", None) != "lmstudio":
+        return {"job_id": None}   # other providers pick the model per request: nothing to load
+
+    def worker(job):
+        def say(msg: str):
+            job.message = msg
+            job.add_log(msg)
+        client.switch_lmstudio_model(req.model, say)
+        job.message = f"Модель «{req.model}» загружена"
+
+    job = job_manager.create("llm-switch", ["Смена модели в LM Studio"], worker)
+    return {"job_id": job.job_id}
+
+
 @app.get("/api/llm/models")
 def api_llm_models(provider: Optional[str] = None, q: str = "", free_only: bool = False, min_context: int = 0,
-                   refresh: bool = False):
+                   refresh: bool = False, text_only: bool = False):
     client = _client_or_error(provider)
     try:
         try:
@@ -1219,7 +1247,12 @@ def api_llm_models(provider: Optional[str] = None, q: str = "", free_only: bool 
     except LMStudioError as exc:
         raise HTTPException(503, str(exc))
     total = len(models)
-    return {"models": providers.filter_models(models, q, free_only, min_context), "total": total,
+    models = providers.filter_models(models, q, free_only, min_context, text_only)
+    if text_only:  # for the picker on the main page: the user's hidden models out, the model in memory first
+        hidden = {h.strip().lower() for h in config.load_settings().get("llm_hidden_models") or []}
+        models = [m for m in models if str(m.get("id") or "").lower() not in hidden]
+        models = sorted(models, key=lambda m: (m.get("loaded") is not True, str(m.get("id")).lower()))
+    return {"models": models, "total": total,
             "provider": client.profile["id"] if hasattr(client, "profile") else provider}
 
 

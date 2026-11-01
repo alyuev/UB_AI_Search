@@ -330,10 +330,29 @@ def _model_entry(kind: str, m: dict) -> dict:
     return out
 
 
-def filter_models(models: list[dict], q: str = "", free_only: bool = False, min_context: int = 0) -> list[dict]:
+# Models that cannot answer a text question: OCR, image generation, speech, rerankers.
+_NON_TEXT_RE = re.compile(r"(^|[^a-z])(ocr|olmocr|image|diffusion|sdxl|flux|whisper|tts|speech|rerank(er)?|clip)([^a-z]|$)")
+_NON_TEXT_ARCH = ("image", "diffusion", "whisper", "clip")
+
+
+def is_text_model(m: dict) -> bool:
+    """False for embedding / OCR / image / speech models: they are useless for questions and translation."""
+    if m.get("is_embedding"):
+        return False
+    mid = str(m.get("id") or "").lower()
+    if _NON_TEXT_RE.search(mid.replace("_", "-")):
+        return False
+    arch = str(m.get("arch") or "").lower()
+    return not any(h in arch for h in _NON_TEXT_ARCH)
+
+
+def filter_models(models: list[dict], q: str = "", free_only: bool = False, min_context: int = 0,
+                  text_only: bool = False) -> list[dict]:
     q = (q or "").strip().lower()
     out = []
     for m in models:
+        if text_only and not is_text_model(m):
+            continue
         if q and q not in (m.get("id") or "").lower() and q not in (m.get("name") or "").lower():
             continue
         if free_only and not (m.get("free") or m.get("cheap")):
@@ -550,6 +569,7 @@ class ProviderClient:
                 e.update({
                     "state": state, "loaded": (state == "loaded") if state in ("loaded", "not-loaded") else None,
                     "max_context_length": m.get("max_context_length"), "loaded_context_length": loaded_ctx,
+                    "arch": m.get("arch") or "",
                     "is_embedding": (m.get("type") == "embeddings") or _looks_like_embedding_model(mid),
                 })
                 e["effective_context"] = loaded_ctx if state == "loaded" and loaded_ctx else m.get("max_context_length")
@@ -654,6 +674,28 @@ class ProviderClient:
         finally:
             resp.close()
             client.close()
+
+    def switch_lmstudio_model(self, model: str, progress=None) -> None:
+        """LM Studio: unload the other loaded LLMs (frees video memory) and load `model` with its own LM Studio
+        settings. Embedding models are left alone. Uses LM Studio's REST API /api/v1/models (0.4+)."""
+        say = progress or (lambda msg: None)
+        data = self._get_json(f"{self.native}/api/v1/models", timeout=10)
+        rows = data.get("models") or []
+        if not any(m.get("key") == model for m in rows):
+            raise ProviderError(f"Модели «{model}» нет в LM Studio.")
+        already = False
+        for m in rows:
+            if m.get("type") != "llm":
+                continue
+            for inst in m.get("loaded_instances") or []:
+                if m.get("key") == model:
+                    already = True
+                    continue
+                say(f"Выгружается «{m.get('key')}»…")
+                self._send_json_post(f"{self.native}/api/v1/models/unload", {"instance_id": inst.get("id")}, timeout=120)
+        if not already:
+            say(f"Загружается «{model}» — для большой модели это может занять минуту и больше…")
+            self._send_json_post(f"{self.native}/api/v1/models/load", {"model": model}, timeout=900)
 
     def resolve_model(self, configured: Optional[str]) -> dict:
         """{"model", "context", "note"}. LM Studio: only a LOADED model is usable (never loads one itself);

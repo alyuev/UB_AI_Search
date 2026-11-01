@@ -158,12 +158,13 @@ async function runQuery(replayId = null) {
     } catch (e) {
       renderStages(panel, { stages: [], progress: 1, message: "Ошибка: " + e.message, status: "error" });
     }
-  } else if (mode === "rag") {
+  } else if (mode === "rag" || mode === "overview") {
     try {
       const { job_id } = await api("/api/jobs/rag", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        // no `k`: the server uses the «Сколько абзацев передавать модели» setting
-        body: JSON.stringify({ question: q, ...replay }),
+        // no `k`: the server uses the «Сколько абзацев передавать модели» setting;
+        // «Обзор по всей книге» forces the overview, otherwise the server decides
+        body: JSON.stringify({ question: q, ...replay, ...(mode === "overview" ? { overview: true } : {}) }),
       });
       pollJob(job_id, panel, (job) => {
         afterQuery();
@@ -345,6 +346,17 @@ function renderAnswerHtml(text) {
     `<div class="inference-box"><div class="inference-label">Вывод из источников <span>(это рассуждение по найденным фактам, а не прямая цитата книги)</span></div>${fmt(body)}</div>`;
 }
 
+// «Модель: …» above the answer: which LLM actually produced this result
+function modelLineHtml(result) {
+  const pr = (result && result.provider) || {};
+  const m = (result && result.answered_model) || pr.model;
+  if (!m) return "";
+  const where = pr.is_cloud ? `☁ ${escapeHtml(pr.name || "облако")}` : `🖥 ${escapeHtml(pr.name || "локально")}`;
+  const backup = result.answered_model && pr.model && result.answered_model !== pr.model
+    ? ` <span class="hint-text">(запасная; основная — ${escapeHtml(pr.model)})</span>` : "";
+  return `<div class="model-line${pr.is_cloud ? " cloud" : ""}">Модель: <strong>${escapeHtml(m)}</strong>${backup} · ${where}</div>`;
+}
+
 function renderRagAnswer(result, errText) {
   const results = $("#results");
   lastView = () => renderRagAnswer(result, errText);
@@ -365,21 +377,26 @@ function renderRagAnswer(result, errText) {
   const noteHtml = brokenHtml + fallbackHtml + (result.model_note ? `<div class="hint-warning">${escapeHtml(result.model_note)}</div>` : "") +
     (result.replay_note ? `<div class="info-note">${escapeHtml(result.replay_note)}</div>` : "") +
     (result.prompt_warnings || []).map((w) => `<div class="hint-warning">${escapeHtml(w)}</div>`).join("");
-  const planHtml = result.plan
+  const ov = result.overview;
+  const overviewHtml = ov
+    ? `<div class="plan-line">📚 Обзор по всей книге: прочитано разделов ${ov.sections} (абзацев ${ov.paragraphs}) за ${ov.parts} ${ov.parts === 1 ? "часть" : "частей"}` +
+      (ov.required ? `, главное слово «${escapeHtml(ov.required)}»` : "") +
+      (ov.failed_parts ? ` · не обработано частей: ${ov.failed_parts}` : "") + `</div>` : "";
+  const planHtml = overviewHtml + (result.plan
     ? `<div class="plan-line">${escapeHtml(result.plan.summary || "")}` +
       (result.plan.semantic_query ? ` · по смыслу: «${escapeHtml(result.plan.semantic_query)}»` : "") + `</div>` +
       ((result.plan.terms_lines || []).length
         ? `<details class="terms-details"><summary>Как проверены слова запроса (по тексту книги)</summary><div class="terms-lines">${result.plan.terms_lines.map(escapeHtml).join("<br>")}</div></details>` : "")
-    : `<div class="plan-line">Поиск по тексту вопроса (подготовка запроса не использовалась).</div>`;
+    : `<div class="plan-line">Поиск по тексту вопроса (подготовка запроса не использовалась).</div>`);
   const unknownHtml = (result.unknown_citations || []).length
     ? `<div class="hint-warning">Внимание: ответ ссылается на номера, которых нет среди найденных абзацев (${escapeHtml(result.unknown_citations.join(", "))}) — проверьте их вручную.</div>`
     : "";
   const noCiteHtml = (!cited.length && !result.no_answer)
     ? `<div class="hint-warning">В ответе нет ссылок на найденные абзацы — относитесь к нему осторожно.</div>` : "";
 
-  let html = noteHtml + `<div class="rag-answer${mdOn ? " md-on" : ""}">${renderAnswerHtml(result.answer || "")}</div>` + unknownHtml + noCiteHtml +
+  let html = modelLineHtml(result) + noteHtml + `<div class="rag-answer${mdOn ? " md-on" : ""}">${renderAnswerHtml(result.answer || "")}</div>` + unknownHtml + noCiteHtml +
     `<div class="card rag-meta">${planHtml}` +
-    `<div class="stats-line">Найдено кандидатов: по словам ${result.candidates?.fts ?? "-"}, по смыслу ${result.candidates?.semantic ?? "-"}; передано модели абзацев: ${sources.length}</div>` +
+    (ov ? "" : `<div class="stats-line">Найдено кандидатов: по словам ${result.candidates?.fts ?? "-"}, по смыслу ${result.candidates?.semantic ?? "-"}; передано модели абзацев: ${sources.length}</div>`) +
     (result.stats_summary ? `<div class="stats-line">${escapeHtml(result.stats_summary)}</div>` : "") + `</div>`;
 
   if (cited.length) {
@@ -406,7 +423,7 @@ function renderTranslationReport(result, jobId, exportHref) {
   const issues = result.issues || [];
   const noteHtml = (result.model_note ? `<div class="hint-warning">${escapeHtml(result.model_note)}</div>` : "") +
     (result.replay_note ? `<div class="info-note">${escapeHtml(result.replay_note)}</div>` : "");
-  const head = noteHtml + `<div class="card"><strong>${escapeHtml(result.summary || "")}</strong>
+  const head = modelLineHtml(result) + noteHtml + `<div class="card"><strong>${escapeHtml(result.summary || "")}</strong>
     ${result.stats_summary ? `<div class="stats-line">${escapeHtml(result.stats_summary)}</div>` : ""}
     <div class="card-actions"><a class="secondary" href="${exportHref || `/api/jobs/${jobId}/translation-report.md`}" download>Экспорт в Markdown</a></div></div>`;
   const sevOrder = { critical: 0, major: 1, minor: 2 };
@@ -978,11 +995,18 @@ async function loadHistory() {
   }
 }
 
+function fmtDuration(s) {
+  s = Math.round(s);
+  return s < 60 ? `${s} с` : `${Math.floor(s / 60)} мин ${s % 60} с`;
+}
+
 function historyRow(e) {
   return `<div class="h-row${currentHistoryEntry && currentHistoryEntry.id === e.id ? " active" : ""}" data-id="${e.id}" tabindex="0">
     <div class="h-main">
-      <div class="h-meta"><span class="h-mode">${MODE_ICON[e.mode] || ""} ${MODE_LABEL[e.mode] || e.mode}<span class="h-rate" title="${e.note ? escapeHtml(e.note) : "оценка"}">${e.rating > 0 ? "👍" : e.rating < 0 ? "👎" : ""}${e.note ? " 📝" : ""}</span>${e.params && e.params.cloud ? `<span class="h-cloud" title="Облако: ${escapeHtml(e.params.provider || "")} — тексты отправлялись на внешний сервер">☁</span>` : ""}</span><span class="h-time">${fmtTime(e.created_at)}</span></div>
+      <div class="h-meta"><span class="h-mode">${MODE_ICON[e.mode] || ""} ${MODE_LABEL[e.mode] || e.mode}${e.params && e.params.overview ? " · обзор" : ""}<span class="h-rate" title="${e.note ? escapeHtml(e.note) : "оценка"}">${e.rating > 0 ? "👍" : e.rating < 0 ? "👎" : ""}${e.note ? " 📝" : ""}</span>${e.params && e.params.cloud ? `<span class="h-cloud" title="Облако: ${escapeHtml(e.params.provider || "")} — тексты отправлялись на внешний сервер">☁</span>` : ""}</span><span class="h-time">${fmtTime(e.created_at)}</span></div>
       <div class="h-query" title="${escapeHtml(e.query)}">${escapeHtml(e.query)}</div>
+      ${e.llm_model ? `<div class="h-model" title="Модель, которая отвечала">🤖 ${escapeHtml(e.llm_model)}</div>` : ""}
+      ${e.duration_s || e.tps ? `<div class="h-model" title="Время выполнения запроса и скорость генерации ответа">⏱ ${e.duration_s ? fmtDuration(e.duration_s) : "—"}${e.tps ? ` · ${Number(e.tps).toFixed(1)} t/s` : ""}</div>` : ""}
       <div class="h-sum">${escapeHtml(e.summary || "")}</div>
     </div>
     <div class="h-btns">
@@ -1062,7 +1086,8 @@ function applyEntryToForm(e) {
   $("#query-input").value = e.query;
   settingQuery = false;
   const sel = $("#qmode-select");
-  if ([...sel.options].some((o) => o.value === e.mode)) { sel.value = e.mode; sel.dispatchEvent(new Event("change")); }
+  const m = e.mode === "rag" && e.params && e.params.overview ? "overview" : e.mode;
+  if ([...sel.options].some((o) => o.value === m)) { sel.value = m; sel.dispatchEvent(new Event("change")); }
   if (e.mode === "search" && e.params && e.params.mode) {
     const sm = $$('input[name="smode"]').find((r) => r.value === e.params.mode);
     if (sm) sm.checked = true;
@@ -1142,6 +1167,7 @@ function afterQuery() {
   recentIdx = -1;
   loadRecent();
   if (historyOpen) loadHistory();
+  if (typeof refreshLlmBadge === "function") refreshLlmBadge();   // the model in memory may have changed
 }
 loadRecent();
 

@@ -297,7 +297,7 @@ def test_rag_and_translation_jobs_are_saved(client, monkeypatch):
         def __init__(self, *a, **kw):
             pass
 
-        def answer(self, question, k=12, progress=None):
+        def answer(self, question, k=12, progress=None, overview=None):
             return {"answer": "Иисус говорил [147.2.2].", "error": None, "cited_ids": ["147.2.2"],
                     "unknown_citations": [], "no_answer": False, "plan": {"summary": "Ищу: Иисус"},
                     "candidates": {"fts": 1, "semantic": 1}, "stats_summary": "m · 10 ток/с",

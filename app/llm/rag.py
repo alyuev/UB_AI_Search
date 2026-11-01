@@ -102,7 +102,8 @@ QUERY_REWRITE_PROMPT = (
     "(English and Russian) and is searched in both. Ты превращаешь вопрос пользователя в план "
     "поиска по книге (текст есть на английском и русском).\n"
     "Output ONLY a JSON object, no prose: "
-    '{"keywords_ru": [...], "keywords_en": [...], "semantic_query": "...", "answer_type": "..."}\n'
+    '{"keywords_ru": [...], "keywords_en": [...], "semantic_query": "...", "answer_type": "...", '
+    '"main_ru": "...", "main_en": "..."}\n'
     "- keywords_ru: 1-{max_terms} key terms or names in Russian, dictionary (nominative, singular) form, "
     "WITHOUT question words (что, кто, как, почему, зачем, в чём, различие...) and without filler.\n"
     "- keywords_en: the English equivalents of the same key terms as they would appear in the English "
@@ -128,9 +129,15 @@ QUERY_REWRITE_PROMPT = (
     '- answer_type: "list" if the question asks to enumerate or name ALL members, kinds, steps, parts '
     "etc. of something (перечисли, назови всех, кто входит, какие бывают, из чего состоит, list, name all); "
     'otherwise "other". Вопрос-перечень -> "list".\n'
+    "- main_ru / main_en: the ONE subject (a person, group, name or thing) that EVERY passage answering the "
+    "question must mention, in dictionary form (Russian) and as written in the English text. Not an abstract "
+    "word the book may not use for it (conflict, relation, meaning...) and not a subject present in almost "
+    "every passage (Jesus, God). «Какие были споры Иисуса с фарисеями?» -> «фарисей» / «Pharisees». "
+    'Empty strings "" if the question has no such single subject (e.g. it compares two concepts). '
+    "Главное слово — то, без чего абзац точно не ответ; если такого нет — пустая строка.\n"
     "Example: question «В чём разница между разумом и духом?» -> "
     '{"keywords_ru":["разум","дух"],"keywords_en":["mind","spirit"],'
-    '"semantic_query":"различие между разумом и духом","answer_type":"other"}'
+    '"semantic_query":"различие между разумом и духом","answer_type":"other","main_ru":"","main_en":""}'
 )
 
 HINTS_LABEL = "Слова из вопроса и их соответствия в книге: "
@@ -231,6 +238,25 @@ DEFAULT_STAGES = [
 ]
 
 NO_ANSWER_MARKER = "нет достаточных данных"
+
+# ---- «Обзор по всей книге»: every section with the main word goes to the model in parts ----
+OVERVIEW_MIN_SECTIONS = 15      # auto mode: a list question whose main word is spread over at least this many sections
+OVERVIEW_MAX_SECTIONS = 150     # more would take too long: the best-matching ones are kept
+OVERVIEW_PART_TOKENS = 9000     # one part (a few sections) of book text per request
+
+OVERVIEW_MAP_PROMPT = (
+    "Ты помогаешь составить полный обзор по книге. Тебе даны вопрос и часть книги — абзацы с номерами в квадратных "
+    "скобках. Выпиши из ЭТИХ абзацев всё, что относится к вопросу: каждый эпизод, случай или факт — отдельной "
+    "короткой строкой «- суть [номер]» (номер абзаца, где это сказано; можно несколько). Пиши на языке вопроса. "
+    "Только то, что есть в абзацах, ничего от себя. Помни, что о том же может говориться другими словами "
+    "(например, «шпионы» вместо «фарисеи»). Если в этой части нет ничего по вопросу — ответь одним словом НЕТ."
+)
+OVERVIEW_REDUCE_TEMPLATE = (
+    "Вопрос: {question}\n\n"
+    "Ниже выписки, сделанные по ВСЕЙ книге (по порядку книги; в скобках — номера абзацев):\n\n{notes}\n\n"
+    "Составь полный ответ на вопрос по этим выпискам: сгруппируй по темам или по порядку событий, объедини повторы, "
+    "не теряй ни одного эпизода и сохрани ссылки на абзацы в квадратных скобках."
+)
 
 
 # UI setting values ("авто"/"вкл"/"выкл") -> the reasoning_effort argument passed to
@@ -334,8 +360,13 @@ def parse_search_plan(text: str, max_terms: int = 8) -> Optional[dict]:
     if not ru and not en:
         return None
     at = obj.get("answer_type")
+
+    def main(key: str) -> str:
+        v = obj.get(key)
+        return re.sub(r"[\"“”«»]", "", v).strip()[:60] if isinstance(v, str) else ""
     return {"keywords_ru": ru, "keywords_en": en, "semantic_query": sq,
-            "answer_type": "list" if isinstance(at, str) and at.strip().lower() == "list" else "other"}
+            "answer_type": "list" if isinstance(at, str) and at.strip().lower() == "list" else "other",
+            "main_ru": main("main_ru"), "main_en": main("main_en")}
 
 
 def rewrite_query(llm, model: str, question: str, timeout: float = 60.0, prompt: Optional[str] = None,
@@ -679,8 +710,160 @@ class RagPipeline:
         return front + rest, info
 
     # ------------------------------------------------------------------ answer ---
+    # ------------------------------------------------------------------ overview ---
+    def _overview_sections(self, merged: Optional[dict]) -> list[list[dict]]:
+        """All sections holding the main word, each as its paragraphs with the word + one neighbour on each side
+        (a story is often told around the word: «шпионы» next to «фарисеи»). Book order. [] without a main word."""
+        req = getattr(merged["search"], "required", None) if merged is not None else None
+        if req is None or req.empty() or self.conn is None or not hasattr(self.searcher, "fts_terms"):
+            return []
+        from app.core import db as core_db
+        try:
+            hits = self.searcher.fts_terms(req, k=5000)
+        except Exception:  # noqa: BLE001 - the overview is a bonus, never fatal
+            logger_rag.exception("overview lookup failed")
+            return []
+        best: dict = {}
+        for rank, h in enumerate(hits):
+            best.setdefault((h["paper"], h["section"]), rank)
+        keep = sorted(best, key=lambda s: best[s])[:OVERVIEW_MAX_SECTIONS]
+        keep_set = set(keep)
+        by_sec: dict = {}
+        seen: set = set()
+        for h in hits:
+            sec = (h["paper"], h["section"])
+            if sec not in keep_set:
+                continue
+            try:
+                ctx = core_db.get_context(self.conn, h["id"], 1, 1)
+            except Exception:  # noqa: BLE001
+                ctx = [h]
+            for p in ctx or [h]:
+                if (p["paper"], p["section"]) == sec and p["id"] not in seen:
+                    seen.add(p["id"])
+                    by_sec.setdefault(sec, []).append(p)
+
+        def order(p):
+            return (p["paper"], p["section"], p.get("paragraph") or 0)
+        return [sorted(by_sec[s], key=order) for s in sorted(by_sec)]
+
+    def _overview(self, question: str, plan: Optional[dict], merged: dict, sections: list[list[dict]], report,
+                  t_total: float, timings: dict, rewrite_prompt: Optional[str]) -> dict:
+        """Map: the sections in parts, the model writes out what each part says on the question.
+        Reduce: one answer from all the notes."""
+        o = self.o
+        lang = "en" if not re.search(r"[а-яё]", question.lower()) else "ru"   # one language: half the text
+        title = llm_title(self.llm)
+        part_budget = max(2000, min(OVERVIEW_PART_TOKENS, (self.max_context_length - 1500) // 2))
+        parts: list[list[dict]] = [[]]
+        used = 0
+        for sec in sections:
+            cost = sum(estimate_tokens(build_context_block([p], lang)) for p in sec)
+            if parts[-1] and used + cost > part_budget:
+                parts.append([])
+                used = 0
+            parts[-1].extend(sec)
+            used += cost
+        parts = [p for p in parts if p]
+        n_par = sum(len(p) for p in parts)
+        report("context", 1, 1, f"Обзор по всей книге: разделов {len(sections)}, абзацев {n_par}, "
+                                f"частей {len(parts)} (главное слово: {merged.get('required', {}).get('display', '')})")
+        t0 = time.monotonic()
+        notes: list[str] = []
+        failed = 0
+        for i, part in enumerate(parts, 1):
+            first, last = part[0]["id"], part[-1]["id"]
+            report("generation", 0, 1, f"Обзор: часть {i} из {len(parts)} ({first} … {last}) · {title} · {self.model}")
+            msgs = [{"role": "system", "content": OVERVIEW_MAP_PROMPT},
+                    {"role": "user", "content": f"Вопрос: {question}\n\nАбзацы книги:\n{build_context_block(part, lang)}"}]
+            try:
+                txt = self.llm.chat(msgs, model=self.model, temperature=0.1, max_tokens=900,
+                                    timeout=self.timeout, reasoning_effort="none")
+            except Exception as exc:  # noqa: BLE001 - one bad part must not lose the others
+                logger_rag.warning("overview part %d failed: %s", i, exc)
+                failed += 1
+                continue
+            txt = (txt or "").strip() if isinstance(txt, str) else ""
+            if txt and not re.fullmatch(r"\W*нет\W*", txt.lower()):
+                notes.append(txt)
+        timings["overview_parts_s"] = round(time.monotonic() - t0, 2)
+
+        plan_out = {**(plan or {"keywords_ru": [], "keywords_en": [], "semantic_query": ""}),
+                    "summary": merged["summary"] if merged else (plan_summary(plan) if plan else ""),
+                    "terms": merged["terms"], "terms_lines": merged["lines"], "hints": merged.get("hints"),
+                    "model_failed": plan is None, "dropped": merged["dropped"],
+                    "search_terms": merged["search"].to_dict()}
+        all_paras = [p for part in parts for p in part]
+        known = {p["id"] for p in all_paras}
+        ov_info = {"sections": len(sections), "paragraphs": n_par, "parts": len(parts), "failed_parts": failed,
+                   "parts_with_notes": len(notes), "required": merged.get("required", {}).get("display")}
+        base = {"sources": all_paras, "plan": plan_out, "candidates": {"fts": n_par, "semantic": 0},
+                "overview": ov_info, "prompt_warnings": self.prompts.warnings}
+        if not notes:
+            msg = ("Не удалось получить ответ ни по одной части книги." if failed == len(parts)
+                   else "В найденных разделах модель не нашла ничего по вопросу. " + NO_ANSWER_MARKER.capitalize() + ".")
+            return {**base, "answer": msg if failed < len(parts) else None,
+                    "error": msg if failed == len(parts) else None, "cited_ids": [], "unknown_citations": [],
+                    "no_answer": True, "has_inference": False, "strictness": self.strictness,
+                    "warnings": list(self.prompts.warnings)}
+
+        user_message = OVERVIEW_REDUCE_TEMPLATE.format(question=question, notes="\n".join(notes))
+        messages = [{"role": "system", "content": self.system_prompt}, {"role": "user", "content": user_message}]
+        report("generation", 0, 1, f"Обзор: сводный ответ по {len(notes)} частям · {title} · {self.model}")
+        gen_t0 = time.monotonic()
+        last = [0.0]
+
+        def on_delta(_chunk: str):
+            now = time.monotonic()
+            if now - last[0] >= 1.0:
+                last[0] = now
+                report("generation", 0, 1, "Обзор: сводный ответ… получение текста")
+        warns = list(self.prompts.warnings)
+        if failed:
+            warns.append(f"Обзор неполный: {failed} из {len(parts)} частей книги модель не обработала (ошибка).")
+        try:
+            answer_text, stats = self.llm.chat_with_stats(
+                messages, model=self.model, temperature=self.temperature,
+                max_tokens=max(self.max_tokens, 3000), timeout=self.timeout,
+                reasoning_effort=self.reasoning_effort, on_delta=on_delta)
+        except LMStudioError as exc:
+            partial = getattr(exc, "partial", None)
+            report("generation", 1, 1, f"ошибка ({title} · {self.model}): {exc}")
+            cited = extract_citations(partial or "")
+            return {**base, "answer": partial or None, "error": str(exc), "truncated": bool(partial),
+                    "cited_ids": [c for c in cited if c in known], "unknown_citations": [c for c in cited if c not in known],
+                    "no_answer": False, "has_inference": False, "strictness": self.strictness, "warnings": warns}
+        timings["generation_s"] = round(time.monotonic() - gen_t0, 2)
+        timings["total_s"] = round(time.monotonic() - t_total, 2)
+        report("generation", 1, 1, stats.summary_line())
+        cited = extract_citations(answer_text)
+        return {**base,
+                "answer": answer_text, "error": None,
+                "cited_ids": [c for c in cited if c in known],
+                "unknown_citations": [c for c in cited if c not in known],
+                "no_answer": NO_ANSWER_MARKER in (answer_text or "").lower(),
+                "has_inference": has_inference(answer_text), "strictness": self.strictness,
+                "stats": stats.to_dict(),
+                "stats_summary": f"Обзор: {len(parts)} частей, {timings.get('total_s', 0):.0f} с всего · " + stats.summary_line(),
+                "answered_model": getattr(stats, "model", None),
+                "fallback_note": getattr(stats, "fallback_note", None),
+                "warnings": warns,
+                "experiment": {
+                    "kind": "rag", "mode": "overview",
+                    "app": {"version": __version__, "date": _dt.date.today().isoformat()},
+                    "model": self.model, "temperature": self.temperature, "max_tokens": self.max_tokens,
+                    "reasoning": {"setting": self.meta.get("reasoning_setting"), "effort": self.reasoning_effort},
+                    "context_length": self.max_context_length, "preset": self.prompts.preset,
+                    "prompts": {"system": self.system_prompt, "user": user_message, "map_system": OVERVIEW_MAP_PROMPT,
+                                "rewrite_system": rewrite_prompt, "rewrite_user": question if rewrite_prompt else None},
+                    "options": dict(o), "plan": plan_out, "overview": ov_info,
+                    "timings": dict(timings), "stats": stats.to_dict(),
+                }}
+
     def answer(self, question: str, k: Optional[int] = None,
-               progress: Optional[Callable[[str, int, int, Optional[int], str], None]] = None) -> dict:
+               progress: Optional[Callable[[str, int, int, Optional[int], str], None]] = None,
+               overview: Optional[bool] = None) -> dict:
+        """overview: True - «обзор по всей книге», False - never, None - decide (list question + spread main word)."""
         def report(stage, current, total, message=""):
             if progress:
                 progress(stage, current, total, None, message)
@@ -733,6 +916,15 @@ class RagPipeline:
             report("analysis", 1, 1, msg)
         else:
             report("analysis", 1, 1, plan_summary(plan) if plan else "Ищу по тексту вопроса")
+
+        # --- «обзор по всей книге» -------------------------------------------------------------
+        ov_sections = self._overview_sections(merged)
+        if overview is None:
+            # not when the question names a section of the book: then the whole list is in one place
+            overview = bool(o["rag_overview_auto"]) and is_list_question(question, plan) \
+                and len(ov_sections) >= OVERVIEW_MIN_SECTIONS and not match_section_titles(self.conn, question, plan)
+        if overview:
+            return self._overview(question, plan, merged, ov_sections, report, t_total, timings, rewrite_prompt)
 
         # --- 2. retrieval ----------------------------------------------------------------------
         t0 = time.monotonic()
