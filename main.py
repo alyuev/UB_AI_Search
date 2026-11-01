@@ -3,6 +3,8 @@
 Options:
   --port N        start looking for a free port at N (env SMARTSEARCH_PORT works too)
   --no-browser    do not open the browser (env SMARTSEARCH_NO_BROWSER=1 works too)
+  --host ADDR     listen on ADDR, e.g. 0.0.0.0 so AI agents on other machines (WSL, LAN) can reach
+                  /mcp and /api/agent/* (env SMARTSEARCH_HOST); needs SMARTSEARCH_AGENT_TOKEN
 """
 from __future__ import annotations
 
@@ -21,10 +23,13 @@ os.environ.setdefault("PYTHONUTF8", "1")
 import uvicorn  # noqa: E402
 
 
+HOST = "127.0.0.1"
+
+
 def _port_free(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
-            s.bind(("127.0.0.1", port))
+            s.bind((HOST, port))
             return True
         except OSError:
             return False
@@ -41,7 +46,7 @@ def find_free_port(start: int = 8765, attempts: int = 50) -> int:
     for _ in range(attempts):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
-                s.bind(("127.0.0.1", port))
+                s.bind((HOST, port))
                 return port
             except OSError:
                 port += 1
@@ -60,6 +65,14 @@ def _arg_value(name: str):
 
 
 def main():
+    global HOST
+    HOST = _arg_value("--host") or os.environ.get("SMARTSEARCH_HOST") or "127.0.0.1"
+    if HOST not in ("127.0.0.1", "localhost", "::1"):
+        from app.agent_api import agent_token
+        if not agent_token():
+            print("Для --host нужен ключ доступа агентов: задайте переменную SMARTSEARCH_AGENT_TOKEN "
+                  "(или «agent_token» в data/settings.json).")
+            sys.exit(4)
     try:
         start = int(_arg_value("--port") or os.environ.get("SMARTSEARCH_PORT") or 8765)
     except ValueError:
@@ -82,7 +95,7 @@ def main():
     if "--no-browser" not in sys.argv and not os.environ.get("SMARTSEARCH_NO_BROWSER"):
         threading.Thread(target=open_browser, daemon=True).start()
     print(f"SmartSearch запускается: {url}", flush=True)
-    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="info"))
+    server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=port, log_level="info"))
 
     def print_banner():
         # after uvicorn's own startup lines, so the address is the last thing visible in the window
@@ -91,6 +104,7 @@ def main():
         if server.started:
             line = "=" * 60
             print("", line, "  SmartSearch работает.", f"  Откройте в браузере:  {url}",
+                  f"  Для ИИ-агентов (MCP):  http://{'<адрес этого компьютера>' if HOST != '127.0.0.1' else '127.0.0.1'}:{port}/mcp",
                   "  Чтобы остановить программу, закройте это окно.", line, "",
                   sep="\n", flush=True)
 
@@ -100,6 +114,8 @@ def main():
     if getattr(app.state, "restart_requested", False):
         print("Перезапуск…")
         argv = [a for a in sys.argv]
+        if HOST != "127.0.0.1" and "--host" not in argv:
+            argv += ["--host", HOST]
         if "--port" not in argv:
             argv += ["--port", str(port)]
         env = dict(os.environ, SMARTSEARCH_RESTARTED="1", SMARTSEARCH_NO_BROWSER="1")

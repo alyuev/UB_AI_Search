@@ -1620,6 +1620,24 @@ def api_source_files():
     return {"files": [n for n in names if n.lower() not in ("readme.md",)]}
 
 
+# ------------------------------------------------------------- agents ------
+
+from app import agent_api  # noqa: E402
+
+app.include_router(agent_api.router)
+
+
+@app.middleware("http")
+async def only_agents_from_outside(request, call_next):
+    """When the program listens on the network (--host), other computers reach only the agent API
+    (which has its own key check); the UI, settings and keys stay local."""
+    host = request.client.host if request.client else ""
+    path = request.url.path
+    if host not in agent_api._LOOPBACK and not (path == "/mcp" or path.startswith("/api/agent/")):
+        return Response("Доступно только с этого компьютера", status_code=403)
+    return await call_next(request)
+
+
 # ------------------------------------------------------------- static ------
 
 app.mount("/", StaticFiles(directory=STATIC_DIR, html=True), name="static")
