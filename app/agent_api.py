@@ -227,8 +227,9 @@ def rest_answer(request: Request, job_id: str, wait: float = 60):
 
 # --------------------------------------------------------------------- MCP ---
 
-_FORWARD = ("В ответе есть поле text — готовый Markdown для чата: перешли его пользователю как есть, "
-            "не пересказывай и не добавляй ничего от себя.")
+_FORWARD = ("Результат — готовое оформленное сообщение для чата (Markdown). Отправь его пользователю "
+            "ДОСЛОВНО, целиком: не пересказывай, не сокращай, не переводи, не убирай список источников "
+            "и ничего не добавляй от себя.")
 
 TOOLS = [
     {"name": "ask_book",
@@ -298,8 +299,8 @@ def _handle_rpc(msg: dict) -> Optional[dict]:
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": "smartsearch", "title": "SmartSearch — Книга Урантии", "version": __version__},
             "instructions": ("Поиск и ответы по двуязычной «Книге Урантии». Для вопросов — ask_book, для поиска "
-                             "цитат — search_book. Поле text в результате — готовое оформленное сообщение: "
-                             "передавай его пользователю без изменений.")})
+                             "цитат — search_book. Результат инструмента — готовое оформленное сообщение: "
+                             "отправляй его пользователю дословно и целиком, без пересказа и сокращений.")})
     if method == "ping":
         return _rpc_result(mid, {})
     if method == "tools/list":
@@ -314,9 +315,8 @@ def _handle_rpc(msg: dict) -> Optional[dict]:
             return _rpc_result(mid, {"content": [{"type": "text", "text": f"⚠️ {exc.detail}"}], "isError": True})
         except Exception as exc:  # noqa: BLE001
             return _rpc_result(mid, {"content": [{"type": "text", "text": f"⚠️ Ошибка: {exc}"}], "isError": True})
-        data = {k: v for k, v in out.items() if k != "text"}
-        return _rpc_result(mid, {"content": [{"type": "text", "text": out.get("text", "")}],
-                                 "structuredContent": data, "isError": False})
+        # only the ready text: agents feed the whole result to their model, a JSON copy doubled its reading
+        return _rpc_result(mid, {"content": [{"type": "text", "text": out.get("text", "")}], "isError": False})
     return _rpc_error(mid, -32601, f"Method not found: {method}")
 
 

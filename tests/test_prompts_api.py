@@ -30,7 +30,7 @@ def q(name):
 def test_list_has_all_prompts_with_defaults_and_versions(api):
     d = api.get("/api/prompts").json()
     ids = [p["id"] for p in d["prompts"]]
-    assert set(ids) == set(P.specs()) and len(ids) == 10
+    assert set(ids) == set(P.specs()) and len(ids) == 11
     p = by_id(api, "rag_system")
     assert p["custom"] is False and p["text"] == p["default"] == SYS_DEFAULT
     assert p["info"]["label"].startswith("стандартный · ") and p["default_info"]["tokens"] > 0

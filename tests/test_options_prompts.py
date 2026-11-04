@@ -46,7 +46,7 @@ def test_public_spec_is_complete():
 
 # ------------------------------------------------------------------ prompts ---
 def test_every_default_prompt_validates_and_is_described():
-    assert len(P.specs()) == 10
+    assert len(P.specs()) == 11
     for pid, sp in P.specs().items():
         assert P.validate(pid, sp["default"]) is None, pid
         assert sp["title"] and sp["description"] and sp["group"] in ("rag", "translation")

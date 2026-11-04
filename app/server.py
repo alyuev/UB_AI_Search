@@ -606,6 +606,14 @@ def api_job_build_glossary():
     return {"job_id": job.job_id}
 
 
+def _job_status(job):
+    """A status line both in the job panel and in its log (e.g. «загружаю модель…»)."""
+    def say(msg: str):
+        job.message = msg
+        job.add_log(msg)
+    return say
+
+
 class RagJobRequest(BaseModel):
     question: str
     k: Optional[int] = None          # None -> the «сколько абзацев передавать» setting
@@ -682,14 +690,17 @@ def api_job_rag(req: RagJobRequest):
     def worker(job):
         progress = job_manager.make_progress_callback(job)
         client = _client_for(prof)
-        # Resolve the model actually usable at the provider (for LM Studio: the LOADED one) and its context
-        # length, used for context fitting; raises a clear error -> job error.
+        client.on_status = _job_status(job)   # LM Studio may have to load the model first: show it
+        # Resolve the model actually usable at the provider (for LM Studio: the LOADED one, or the configured one
+        # loaded automatically when nothing is loaded) and its context length, used for context fitting;
+        # raises a clear error -> job error.
         resolved = client.resolve_model(model_pref)
         if resolved["note"]:
             job.add_log(resolved["note"])
         rw_client, rw_model, rw_info = None, None, None
         if rw_plan and (rw_plan[0]["id"], rw_plan[1]) != (prof["id"], model_pref):
             rw_client = _client_for(rw_plan[0])
+            rw_client.on_status = _job_status(job)
             rw_model = rw_client.resolve_model(rw_plan[1])["model"]
             rw_info = providers.public_info(settings, rw_plan[0], rw_model)
             job.add_log(f"Подготовка запроса: {rw_plan[0]['name']} · {rw_model}")
@@ -737,7 +748,7 @@ def api_job_rag(req: RagJobRequest):
             {**{k: result.get(k) for k in ("answer", "cited_ids", "unknown_citations", "no_answer", "has_inference",
                                           "plan", "candidates", "stats_summary", "model_note", "prompt_warnings",
                                           "warnings", "provider", "truncated", "error", "answered_model",
-                                          "fallback_note", "overview")},
+                                          "fallback_note", "overview", "followup")},
              "sources": _compact(result.get("sources") or [])},
             "ответ оборван на середине" if partial else
             "в книге нет данных для ответа" if result.get("no_answer")
@@ -746,7 +757,8 @@ def api_job_rag(req: RagJobRequest):
         if partial:   # the job is an error (the reason is shown), the partial answer stays in job.result
             raise RuntimeError(result["error"])
 
-    job = job_manager.create("rag", ["analysis", "fts", "semantic", "hybrid", "context", "generation"], worker)
+    job = job_manager.create("rag", ["analysis", "fts", "semantic", "hybrid", "context", "generation", "followup"],
+                             worker)
     return {"job_id": job.job_id}
 
 
@@ -772,6 +784,7 @@ def api_job_translation(req: TranslationJobRequest):
     def worker(job):
         progress = job_manager.make_progress_callback(job)
         client = _client_for(prof)
+        client.on_status = _job_status(job)
         resolved = client.resolve_model(model_pref)
         if resolved["note"]:
             job.add_log(resolved["note"])

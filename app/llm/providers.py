@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
 from typing import Callable, Optional
 from urllib.parse import urlparse
@@ -36,6 +37,7 @@ _sleep: Callable[[float], None] = time.sleep
 _now: Callable[[], float] = time.monotonic
 _MODEL_CACHE: dict[str, tuple[float, list[dict]]] = {}
 _ALWAYS_THINKS: dict[tuple[str, str], bool] = {}   # (LM Studio address, model) -> reasoning cannot be switched off
+_AUTOLOAD_LOCK = threading.Lock()   # one automatic LM Studio load at a time
 # An empty reasoning block put at the start of the answer: the model takes its thinking as done and answers at once.
 # The only way to stop the thinking of a model whose LM Studio template allows reasoning «on» only (e.g. Flint).
 NO_THINK_PREFILL = {"role": "assistant", "content": "<think>\n\n</think>\n\n"}
@@ -295,8 +297,12 @@ def client_for(settings: dict, prof: dict, timeout: Optional[float] = None) -> "
             app_headers["HTTP-Referer"] = str(settings["openrouter_referer"])
         if settings.get("openrouter_title"):
             app_headers["X-Title"] = str(settings["openrouter_title"])
+    autoload = 0
+    if prof["kind"] == "lmstudio":
+        from app import options as opts_mod
+        autoload = int(opts_mod.effective(settings)["lmstudio_autoload_context"] or 0)
     return ProviderClient(prof, api_key=key, timeout=timeout or prof.get("timeout") or settings.get("llm_timeout"),
-                          app_headers=app_headers)
+                          app_headers=app_headers, autoload_context=autoload)
 
 
 # ------------------------------------------------------- reasoning/cost ---
@@ -377,8 +383,11 @@ class ProviderClient:
     """OpenAI-compatible chat client for every provider kind (same interface as LMStudioClient)."""
 
     def __init__(self, profile: dict, api_key: Optional[str] = None, timeout: Optional[float] = None,
-                 app_headers: Optional[dict] = None):
+                 app_headers: Optional[dict] = None, autoload_context: int = 0):
         self.profile = profile
+        # LM Studio: context to load the chosen model with when NOTHING is loaded (0 = never load it ourselves)
+        self.autoload_context = int(autoload_context or 0)
+        self.on_status: Optional[Callable[[str], None]] = None   # progress lines (the job log) while loading
         self.kind = profile["kind"]
         self.api_key = api_key or None
         self.base_url = profile["base_url"].rstrip("/")
@@ -699,11 +708,37 @@ class ProviderClient:
                 self._send_json_post(f"{self.native}/api/v1/models/unload", {"instance_id": inst.get("id")}, timeout=120)
         if not already:
             say(f"Загружается «{model}» — для большой модели это может занять минуту и больше…")
-            self._send_json_post(f"{self.native}/api/v1/models/load", {"model": model}, timeout=900)
+            self._load_lmstudio(model)
+
+    def _load_body(self, model: str) -> dict:
+        body = {"model": model}
+        if self.autoload_context:    # the context SmartSearch needs (and agents sharing the model), Flash Attention on
+            body.update(context_length=self.autoload_context, flash_attention=True)
+        return body
+
+    def _load_lmstudio(self, model: str) -> dict:
+        res = self._send_json_post(f"{self.native}/api/v1/models/load", self._load_body(model), timeout=900)
+        return res if isinstance(res, dict) else {}
+
+    def _autoload(self, model: str) -> dict:
+        """Nothing is loaded in LM Studio: load the chosen model with `autoload_context` and report it."""
+        say = self.on_status or (lambda msg: None)
+        with _AUTOLOAD_LOCK:   # two requests at once (search plan + answer) must not load it twice
+            again = {m["id"]: m for m in self.list_models()}.get(model) or {}
+            if again.get("state") == "loaded":
+                return {"model": model, "context": again.get("effective_context"), "note": None}
+            say(f"В LM Studio нет загруженной модели — загружаю «{model}» "
+                f"с контекстом {self.autoload_context:,} токенов…".replace(",", " "))
+            t0 = time.monotonic()
+            res = self._load_lmstudio(model)
+        ctx = (res.get("load_config") or {}).get("context_length") or self.autoload_context
+        note = (f"LM Studio: модель «{model}» загружена автоматически (контекст {ctx:,} токенов, "
+                f"{time.monotonic() - t0:.0f} с).").replace(",", " ")
+        return {"model": model, "context": ctx, "note": note}
 
     def resolve_model(self, configured: Optional[str]) -> dict:
-        """{"model", "context", "note"}. LM Studio: only a LOADED model is usable (never loads one itself);
-        other kinds: the configured model (or the provider's default)."""
+        """{"model", "context", "note"}. LM Studio: a LOADED model; when nothing at all is loaded, the configured one
+        is loaded with `autoload_context` (if that is not 0). Other kinds: the configured model (or the default)."""
         if self.kind == "lmstudio":
             models = self.list_models()
             loaded = [m for m in models if m.get("state") == "loaded"]
@@ -715,7 +750,11 @@ class ProviderClient:
                 note = (f"Настроенная модель «{configured}» не загружена в LM Studio — используется загруженная «{m['id']}»."
                         if configured else f"Модель не выбрана в настройках — используется загруженная «{m['id']}».")
                 return {"model": m["id"], "context": m.get("effective_context"), "note": note}
+            if configured and configured in by_id and self.autoload_context:
+                return self._autoload(configured)
             hint = f" Настроена модель «{configured}», но она не загружена." if configured else ""
+            if not configured and self.autoload_context:
+                hint = " Выберите модель в Настройки → Модель LLM — тогда программа загрузит её сама."
             raise ProviderError("В LM Studio не загружена ни одна модель. Загрузите модель в LM Studio "
                                 "и выберите её в настройках." + hint)
         model = configured or self.profile.get("default_model") or ""

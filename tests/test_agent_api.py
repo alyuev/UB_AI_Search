@@ -49,10 +49,10 @@ def test_mcp_handshake_and_tools(api):
 def test_mcp_tool_calls(api):
     res = rpc(api, "tools/call", {"name": "search_book", "arguments": {"query": "Слово", "mode": "fts"}}).json()["result"]
     assert not res["isError"] and "В начале было Слово" in res["content"][0]["text"]
-    assert res["structuredContent"]["results"][0]["id"] == "147.2.1"
+    assert "structuredContent" not in res   # only the ready text: no JSON copy for the agent's model to read
 
     res = rpc(api, "tools/call", {"name": "get_paragraph", "arguments": {"id": "147.2.2", "context": 1}}).json()["result"]
-    assert [p["id"] for p in res["structuredContent"]["paragraphs"]] == ["147.2.1", "147.2.2", "147.2.3"]
+    assert all(f"`{i}`" in res["content"][0]["text"] for i in ("147.2.1", "147.2.2", "147.2.3"))
 
     res = rpc(api, "tools/call", {"name": "ask_book", "arguments": {"question": "О любви"}}).json()["result"]
     assert not res["isError"] and "любви Отца" in res["content"][0]["text"]

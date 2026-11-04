@@ -60,6 +60,7 @@ function highlight(text, q) {
 const STAGE_LABELS = {
   analysis: "Подготовка запроса", fts: "Поиск по словам", semantic: "Поиск по смыслу",
   hybrid: "Объединение", context: "Контекст", generation: "Генерация ответа",
+  followup: "Дозапрос фактов",
   "Сравнение EN/RU": "Сравнение EN/RU",
   "Анализ смысловых расхождений": "Анализ расхождений",
   "Формирование отчёта": "Формирование отчёта",
@@ -382,7 +383,12 @@ function renderRagAnswer(result, errText) {
     ? `<div class="plan-line">📚 Обзор по всей книге: прочитано разделов ${ov.sections} (абзацев ${ov.paragraphs}) за ${ov.parts} ${ov.parts === 1 ? "часть" : "частей"}` +
       (ov.required ? `, главное слово «${escapeHtml(ov.required)}»` : "") +
       (ov.failed_parts ? ` · не обработано частей: ${ov.failed_parts}` : "") + `</div>` : "";
-  const planHtml = overviewHtml + (result.plan
+  const fu = result.followup;
+  const followupHtml = fu && (fu.queries || []).length
+    ? `<div class="plan-line">🔁 Дозапрос недостающих фактов: ${escapeHtml(fu.queries.join("; "))}` +
+      ((fu.added || []).length ? ` · добавлено абзацев: ${fu.added.length}, ответ получен заново` : " · новых абзацев не нашлось") +
+      `</div>` : "";
+  const planHtml = overviewHtml + followupHtml + (result.plan
     ? `<div class="plan-line">${escapeHtml(result.plan.summary || "")}` +
       (result.plan.semantic_query ? ` · по смыслу: «${escapeHtml(result.plan.semantic_query)}»` : "") + `</div>` +
       ((result.plan.terms_lines || []).length

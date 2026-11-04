@@ -188,6 +188,113 @@ INFERENCE_REMINDER = (
     "Если же нужного числа или факта нет вовсе и разумного допущения тоже нет — не выводи, а скажи, чего не хватает.)"
 )
 
+# «Дозапрос недостающих фактов»: when the first answer says a fact is missing, the model names the facts that
+# would let the answer be derived, they are searched for and the question is answered again.
+FOLLOWUP_PROMPT = (
+    "A first attempt to answer a question about a book from found excerpts did not fully succeed: the draft "
+    "answer below says that some fact is missing. Первая попытка ответить по найденным абзацам не удалась: "
+    "в черновике сказано, что каких-то сведений нет. You also get the titles of the book sections where the "
+    "excerpts were found: they often name the event a fact is tied to. Даны и названия разделов, где нашлись абзацы.\n"
+    "Your task: find the FEW facts that, if found ELSEWHERE in the book, would let the answer be computed by "
+    "simple arithmetic or reasoning. Most often these are DATES: the year (or date) of the event where a known "
+    "number is given and the year of the event the question is about. Example of reasoning: age at death = age "
+    "at a known moment + (year of death - year of that moment). A person's death or another event may coincide "
+    "with a well-known event mentioned in the draft or in the section titles (a trial, a crucifixion, a "
+    "journey...): then ask for the date of THAT well-known event. Подумай, из каких фактов (чаще всего дат) ответ "
+    "можно вычислить, и назови недостающие; если событие совпадает с известным событием — спроси дату известного.\n"
+    "NEVER repeat the question itself or ask for the very thing the draft says is not stated (e.g. «возраст Иуды "
+    "при смерти» for the question «Сколько лет было Иуде, когда он умер?» is useless). Do not ask for facts the "
+    "draft already has. Не повторяй сам вопрос — ищи то, из чего ответ можно вычислить.\n"
+    "Output ONLY a JSON object, no prose: {\"how\": \"...\", \"queries\": [\"...\", \"...\"]}. \"how\": one short "
+    "sentence in Russian: how the answer can be computed. \"queries\": 1 to 3 short search phrases in Russian, "
+    "each about ONE dated event or ONE number (a declarative phrase that names the concrete people and events, "
+    "e.g. «год …», «дата …»). If no other fact from the book could help, output {\"how\": \"\", \"queries\": []}.\n"
+    "Example. Question: «Сколько лет было Алме, когда она умерла?» Draft: «Алме было двадцать лет, когда она "
+    "вышла замуж за Борна [1:1.1]. Она умерла в день великого наводнения [1:2.3]. Возраст при смерти не указан.» "
+    "Sections: «Документ 1. Семья Борна · Наводнение». Output: {\"how\": \"20 лет + (год наводнения − год свадьбы)\", "
+    "\"queries\": [\"год свадьбы Алмы и Борна\", \"в каком году было великое наводнение\"]}"
+)
+
+FOLLOWUP_PER_QUERY = 3   # new paragraphs taken per missing-fact search
+
+# Appended to the user message of the second attempt.
+FOLLOWUP_NOTE = (
+    "\n\n(Второй проход: к источникам добавлены абзацы, найденные по недостающим фактам ({facts}). Теперь "
+    "ОБЯЗАТЕЛЬНО попробуй вычислить ответ по фактам из РАЗНЫХ абзацев в блоке «Вывод:» — со ссылками на каждый "
+    "факт. Если для расчёта не хватает одного звена, но есть естественное допущение (например, что человек умер "
+    "в том же году, что и описанные вместе с его смертью события, или что годы считаются одинаково), прими его "
+    "явно строкой «Допущение: …» и дай приблизительный ответ. Ответить «данных нет», когда приблизительный "
+    "расчёт с явным допущением возможен, — НЕВЕРНО. Только если нужных чисел нет совсем — скажи, чего именно "
+    "не хватает.)"
+)
+
+_GAP_RE = re.compile(
+    r"нет\s+(?:достаточных\s+|прямых\s+|точных\s+)?(?:данных|сведений|информации|указани)"
+    r"|не\s+(?:указан|сказан|упомина|приведен|приведён|сообщ)"
+    r"|(?:no|not enough|insufficient)\s+(?:data|information)|not\s+(?:stated|mentioned|given|specified)",
+    re.IGNORECASE)
+
+
+_DATE_WORD_RE = re.compile(r"\b(?:год|года|году|дата|дату|даты|когда|век|year|date|when)\b", re.IGNORECASE)
+_DATE_RE = re.compile(r"\b\d{1,4}\s+(?:год|года|году)\s+(?:до\s+)?н\.\s*э\.|\bA\.\s*D\.\s*\d+|\b\d+\s+B\.\s*C\.",
+                      re.IGNORECASE)
+
+
+def has_date(p: dict) -> bool:
+    """The paragraph names a calendar year («30 года н. э.», «A.D. 30»)."""
+    return bool(_DATE_RE.search(p.get("ru") or "") or _DATE_RE.search(p.get("en") or ""))
+
+
+def answer_has_gap(text: str) -> bool:
+    """The answer says that something needed is missing (fully or partly)."""
+    return bool(_GAP_RE.search(text or ""))
+
+
+def parse_followup(text: str, max_queries: int = 3) -> list[str]:
+    m = re.search(r"\{.*\}", text or "", re.S)
+    if not m:
+        return []
+    try:
+        data = json.loads(m.group(0))
+    except ValueError:
+        return []
+    items = data.get("queries") if isinstance(data, dict) else None
+    out: list[str] = []
+    for q in items if isinstance(items, list) else []:
+        q = re.sub(r"\s+", " ", q).strip() if isinstance(q, str) else ""
+        if q and q.lower() not in (x.lower() for x in out):
+            out.append(q[:200])
+    return out[:max_queries]
+
+
+def section_titles(paragraphs: list[dict], limit: int = 15) -> list[str]:
+    """«Документ 186. Перед распятием · Конец Иуды Искариота» for the sources, unique, in order."""
+    out: list[str] = []
+    for p in paragraphs:
+        pt, st = (p.get("paper_title") or {}).get("ru"), (p.get("section_title") or {}).get("ru")
+        t = f"Документ {p.get('paper')}" + (f". {pt}" if pt else "") + (f" · {st}" if st else "")
+        if (pt or st) and t not in out:
+            out.append(t)
+    return out[:limit]
+
+
+def plan_followup(llm, model: str, question: str, draft: str, timeout: float = 60.0,
+                  prompt: Optional[str] = None, sections: Optional[list[str]] = None) -> list[str]:
+    """One short LLM call: search phrases for the facts the draft answer lacks. [] on any failure."""
+    user = f"Вопрос: {question}\n\nЧерновик ответа:\n{draft}"
+    if sections:
+        user += "\n\nРазделы, где нашлись абзацы:\n" + "\n".join(f"- {t}" for t in sections)
+    try:
+        raw = llm.chat(
+            [{"role": "system", "content": prompt or FOLLOWUP_PROMPT},
+             {"role": "user", "content": user}],
+            model=model, temperature=0.0, max_tokens=400, timeout=timeout, reasoning_effort="none",
+        )
+    except Exception:  # noqa: BLE001 - the second attempt is a bonus, never fatal
+        return []
+    return parse_followup(raw if isinstance(raw, str) else "")
+
+
 # Appended to the user message when the question asks for a full enumeration.
 LIST_REMINDER = (
     "\n\n(Это вопрос-перечень: перечисли ВСЕ подходящие пункты из источников, ничего не пропуская, "
@@ -889,6 +996,54 @@ class RagPipeline:
                     "timings": dict(timings), "stats": stats.to_dict(),
                 }}
 
+    def _followup(self, question: str, draft: str, fitted: list[dict], budget: int, lang: str,
+                  make_message: Callable[[list[dict]], str], report, rw_llm, rw_model: str) -> dict:
+        """«Дозапрос недостающих фактов»: the model names the facts the first answer lacks, they are searched for
+        and the question is answered again with them added. Returns the info for the result/snapshot; on success
+        also answer/stats/sources/user_message of the second attempt (the caller takes them out)."""
+        report("followup", 0, 1, "В найденных абзацах ответа нет — ищу недостающие факты…")
+        queries = plan_followup(rw_llm, rw_model, question, draft, timeout=min(self.timeout, 90),
+                                prompt=self.prompts.text("rag_followup"), sections=section_titles(fitted))
+        info: dict = {"queries": queries, "added": [], "first_answer": draft}
+        if not queries:
+            report("followup", 1, 1, "Модель не назвала недостающих фактов — остаётся первый ответ")
+            return info
+        known = {p["id"] for p in fitted}
+        added: list[dict] = []
+        for q in queries:
+            try:
+                found = self.searcher.hybrid(q, k=FOLLOWUP_PER_QUERY * 10)
+            except Exception:  # noqa: BLE001
+                logger_rag.exception("follow-up search failed: %s", q)
+                continue
+            if _DATE_WORD_RE.search(q):   # «год / дата …»: the paragraphs where a date is really written go first
+                found = sorted(found, key=lambda r: not has_date(r))
+            fresh = [r for r in found if r["id"] not in known][:FOLLOWUP_PER_QUERY]
+            known.update(r["id"] for r in fresh)
+            added += fresh
+        if not added:
+            report("followup", 1, 1, "Ищу: " + "; ".join(queries) + "\nНовых абзацев не нашлось — остаётся первый ответ")
+            return info
+        extra = fit_context(added, budget, reserved_tokens=0, lang=lang)
+        rest = fit_context(fitted, budget - estimate_tokens(build_context_block(extra, lang)), reserved_tokens=0, lang=lang)
+        sources = rest + extra
+        info["added"] = [p["id"] for p in extra]
+        message = make_message(sources) + FOLLOWUP_NOTE.replace("{facts}", "; ".join(queries))
+        report("followup", 0, 1, "Ищу: " + "; ".join(queries)
+               + f"\nДобавлено абзацев: {len(extra)} ({', '.join(info['added'])}) · отвечаю заново ({self.model})…")
+        try:
+            text, stats = self.llm.chat_with_stats(
+                [{"role": "system", "content": self.system_prompt}, {"role": "user", "content": message}],
+                model=self.model, temperature=self.temperature, max_tokens=self.max_tokens, timeout=self.timeout,
+                reasoning_effort=self.reasoning_effort)
+        except LMStudioError as exc:
+            info["error"] = str(exc)
+            report("followup", 1, 1, f"ошибка второго прохода: {exc} — остаётся первый ответ")
+            return info
+        report("followup", 1, 1, stats.summary_line())
+        info.update(answer=text, stats=stats, sources=sources, user_message=message)
+        return info
+
     def answer(self, question: str, k: Optional[int] = None,
                progress: Optional[Callable[[str, int, int, Optional[int], str], None]] = None,
                overview: Optional[bool] = None) -> dict:
@@ -999,7 +1154,6 @@ class RagPipeline:
         budget = int(avail * float(o["rag_context_share"]))
         retrieved, expanded = self._expand_sections(retrieved, expand_secs, budget, lang)
         fitted = fit_context(retrieved, budget, reserved_tokens=0, lang=lang)
-        context_block = build_context_block(fitted, lang)
         msg = f"использовано источников: {len(fitted)}"
         if list_q:
             msg += "\nВопрос-перечень: передаю модели разделы целиком"
@@ -1007,10 +1161,12 @@ class RagPipeline:
             how = "целиком" if e["whole"] else f"{e['added']} из {e['total']} абзацев (не влез целиком)"
             msg += f"\nРаздел {e['id']}" + (f" «{e['title']}»" if e.get("title") else "") + f": {how}"
         report("context", 1, 1, msg)
-        user_message = prompts_mod.render(user_tmpl, sources=context_block, question=question,
-                                          inference_reminder=reminder)
-        if list_q:
-            user_message += LIST_REMINDER
+        def make_message(srcs: list[dict]) -> str:
+            m = prompts_mod.render(user_tmpl, sources=build_context_block(srcs, lang), question=question,
+                                   inference_reminder=reminder)
+            return m + LIST_REMINDER if list_q else m
+
+        user_message = make_message(fitted)
         messages = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": user_message},
@@ -1055,6 +1211,7 @@ class RagPipeline:
             used_ids.append("rag_answer_lang_ru")
         if self.query_rewrite:
             used_ids.append("query_rewrite")
+        followup = None   # «дозапрос недостающих фактов», set after the first answer
 
         def experiment(stats_dict=None):
             timings["generation_s"] = round(time.monotonic() - gen_t0, 2)
@@ -1087,6 +1244,7 @@ class RagPipeline:
                     "terms_used": merged is not None and not merged["search"].empty(),
                 },
                 "plan": plan_out,
+                "followup": followup,
                 "timings": dict(timings),
                 "stats": stats_dict,
             }
@@ -1130,10 +1288,22 @@ class RagPipeline:
             return out
         report("generation", 1, 1, stats.summary_line())
 
+        if o["rag_followup"] and inference_on and answer_has_gap(answer_text):
+            t0 = time.monotonic()
+            followup = self._followup(question, answer_text, fitted, budget, lang, make_message, report, rw_llm, rw_model)
+            timings["followup_s"] = round(time.monotonic() - t0, 2)
+            if followup.get("answer"):
+                answer_text, stats = followup.pop("answer"), followup.pop("stats")
+                fitted, user_message = followup.pop("sources"), followup.pop("user_message")
+                used_ids.append("rag_followup")
+
         cited = extract_citations(answer_text)
         known = {p["id"] for p in fitted}
         warns = list(self.prompts.warnings)
+        if followup and followup.get("error"):
+            warns.append(f"Второй проход (дозапрос фактов) не удался: {followup['error']}. Показан первый ответ.")
         return {
+            "followup": followup,
             "answer": answer_text,
             "error": None,
             "sources": fitted,

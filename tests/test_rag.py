@@ -388,3 +388,102 @@ def test_section_title_match_needs_all_title_words():
     assert [(h["paper"], h["section"]) for h in hits] == [(45, 4)]
     assert match_section_titles(c, "Кто такой Адам?", None) == []      # one-word titles never match
     assert match_section_titles(c, "что такое совет?", None) == []     # only part of the title
+
+
+# ------------------------------------------------------- «дозапрос недостающих фактов» ---
+from app.llm.lmstudio import LMStudioError  # noqa: E402
+from app.llm.rag import answer_has_gap, parse_followup  # noqa: E402
+
+GAP = "Иуде было 30 лет, когда он стал апостолом [0:1.2]. В найденных абзацах нет сведений о годе его смерти."
+DERIVED = "Прямые факты: 30 лет [0:1.2]; казнь в 30 году [0:7.7].\n\nВывод: около 34 лет [0:1.2][0:7.7]."
+
+
+class SeqLLM(FakeLLM):
+    """chat(): the search plan first, then the follow-up plan; chat_with_stats(): answers in turn."""
+    def __init__(self, answers, followup='{"queries": ["год избрания апостолов", "дата суда у Пилата"]}', fail_second=False):
+        super().__init__(plan_json=PLAN)
+        self.answers, self.followup_json, self.fail_second = list(answers), followup, fail_second
+
+    def chat(self, messages, model, temperature, max_tokens, timeout, reasoning_effort=None, **kw):
+        super().chat(messages, model, temperature, max_tokens, timeout, reasoning_effort)
+        return self.plan_json if len(self.chat_calls) == 1 else self.followup_json
+
+    def chat_with_stats(self, messages, model, temperature, max_tokens, timeout, reasoning_effort=None, on_delta=None):
+        self.gen_calls.append(messages)
+        if self.fail_second and len(self.gen_calls) == 2:
+            raise LMStudioError("timeout")
+        return self.answers[len(self.gen_calls) - 1], FakeStats()
+
+
+class DateSearcher(FakeSearcher):
+    def hybrid(self, q, k=20, **kw):
+        self.calls.append(("hybrid", q))
+        return [P("0:1.2"), P("0:7.7", "казнь в 30 году")] if "Пилат" in q else [P("0:6.6", "избрание в 26 году")]
+
+
+def test_gap_detection_and_followup_parsing():
+    assert answer_has_gap(GAP) and answer_has_gap("В найденных абзацах нет достаточных данных для ответа")
+    assert answer_has_gap("Возраст при смерти прямо не указан [0:1.2].")
+    assert not answer_has_gap("Иуде было 30 лет [0:1.2].") and not answer_has_gap("")
+    assert parse_followup('Вот:\n{"queries": ["a", " A ", "b", "c", "d"]}') == ["a", "b", "c"]
+    assert parse_followup('{"queries": []}') == [] and parse_followup("нет json") == []
+    assert parse_followup('{"queries": "oops"}') == [] and parse_followup('{"queries": [1, null, "x"]}') == ["x"]
+
+
+def test_followup_adds_missing_facts_and_answers_again():
+    llm, s, progress = SeqLLM([GAP, DERIVED]), DateSearcher(), []
+    pipe = RagPipeline(s, llm, "m", max_context_length=32000)
+    res = pipe.answer("Сколько лет было Иуде, когда он умер?", k=5, progress=lambda *a: progress.append(a))
+    assert [c[1] for c in s.calls if c[0] == "hybrid"] == ["год избрания апостолов", "дата суда у Пилата"]
+    assert res["answer"] == DERIVED and res["has_inference"] and res["no_answer"] is False
+    fu = res["followup"]
+    assert fu["queries"] == ["год избрания апостолов", "дата суда у Пилата"]
+    assert fu["added"] == ["0:6.6", "0:7.7"] and fu["first_answer"] == GAP   # 0:1.2 was already a source
+    ids = [p["id"] for p in res["sources"]]
+    assert "0:6.6" in ids and "0:7.7" in ids and res["cited_ids"] == ["0:1.2", "0:7.7"]
+    second = llm.gen_calls[1][1]["content"]
+    assert "избрание в 26 году" in second and "Второй проход" in second and "дата суда у Пилата" in second
+    assert "Черновик ответа" in llm.chat_calls[1]["messages"][1]["content"]
+    assert any(p[0] == "followup" for p in progress)
+    exp = res["experiment"]
+    assert exp["followup"]["added"] == ["0:6.6", "0:7.7"] and "rag_followup" in exp["prompt_texts"]
+    assert exp["prompts"]["user"] == second and "followup_s" in exp["timings"]
+
+
+def test_followup_skipped_when_answered_disabled_or_facts_only():
+    for kw, answer in (({}, "Иуде было 30 лет [0:1.2]."), ({"options": {"rag_followup": False}}, GAP),
+                       ({"strictness": "facts_only"}, GAP)):
+        llm = SeqLLM([answer, DERIVED])
+        res = RagPipeline(DateSearcher(), llm, "m", max_context_length=32000, **kw).answer("q", k=5)
+        assert len(llm.gen_calls) == 1 and res["answer"] == answer and res["followup"] is None
+
+
+def test_followup_keeps_first_answer_when_nothing_helps_or_second_fails():
+    llm = SeqLLM([GAP, DERIVED], followup='{"queries": []}')
+    res = RagPipeline(DateSearcher(), llm, "m", max_context_length=32000).answer("q", k=5)
+    assert len(llm.gen_calls) == 1 and res["answer"] == GAP and res["followup"]["queries"] == []
+    llm = SeqLLM([GAP, DERIVED], fail_second=True)
+    res = RagPipeline(DateSearcher(), llm, "m", max_context_length=32000).answer("q", k=5)
+    assert res["answer"] == GAP and res["error"] is None and res["followup"]["error"]
+    assert any("Второй проход" in w for w in res["warnings"])
+    assert "0:6.6" not in [p["id"] for p in res["sources"]]   # sources of the answer actually shown
+
+
+def test_followup_prefers_paragraphs_with_a_written_date_and_sends_section_titles():
+    from app.llm.rag import has_date
+    assert has_date(P("1:1.1", "в пятницу, 7 апреля 30 года н. э., суд")) and has_date({"en": "Friday, April 7, A.D. 30"})
+    assert not has_date(P("1:1.1", "в тот год он был распят")) and not has_date(P("1:1.1", "ему было 30 лет"))
+
+    class Many(FakeSearcher):
+        def hybrid(self, q, k=20, **kw):
+            self.calls.append(("hybrid", q, k))
+            return [P(f"0:8.{i}", "распятие без года") for i in range(1, 6)] + [P("0:9.1", "7 апреля 30 года н. э.")]
+
+    llm = SeqLLM([GAP, DERIVED], followup='{"how": "30 + (год смерти − год избрания)", "queries": ["год распятия Иисуса"]}')
+    s = Many()
+    src = [dict(P("0:1.2"), paper_title={"ru": "Перед распятием"}, section_title={"ru": "Конец Иуды"})]
+    s.fts = lambda q, k=20, lang="both", mode=None: src
+    res = RagPipeline(s, llm, "m", max_context_length=32000).answer("Сколько лет было Иуде?", k=5)
+    assert res["followup"]["added"][0] == "0:9.1" and len(res["followup"]["added"]) == 3
+    assert ("hybrid", "год распятия Иисуса", 30) in s.calls
+    assert "Документ 0. Перед распятием · Конец Иуды" in llm.chat_calls[1]["messages"][1]["content"]

@@ -376,3 +376,51 @@ def test_build_dist_guard(tmp_path):
     (tmp_path / "data" / "settings.json").write_text("{}")
     names = sorted(f.name for f in build_dist.find_secret_files(tmp_path))
     assert names == ["secrets.json", "settings.json"]
+
+
+def test_lmstudio_autoloads_configured_model_when_nothing_is_loaded():
+    load = {"type": "llm", "instance_id": "a", "status": "loaded", "load_time_seconds": 3.2,
+            "load_config": {"context_length": 65536, "flash_attention": True}}
+    fake = FakeOpenAI(native={"/api/v0/models": {"data": [{"id": "a", "state": "not-loaded", "type": "llm"},
+                                                          {"id": "b", "state": "not-loaded", "type": "llm"}]},
+                              "/api/v1/models/load": load})
+    c, _ = mk("lmstudio", key=None, fake=fake)
+    c.autoload_context = 65536
+    said = []
+    c.on_status = said.append
+    r = c.resolve_model("a")
+    assert r["model"] == "a" and r["context"] == 65536 and "загружена автоматически" in r["note"]
+    sent = [json.loads(q.content) for q in fake.requests if q.url.path == "/api/v1/models/load"]
+    assert sent == [{"model": "a", "context_length": 65536, "flash_attention": True}]
+    assert said and "65 536" in said[0]
+    # no model chosen, or autoload switched off: the old clear error, nothing is loaded
+    with pytest.raises(P.ProviderError, match="Выберите модель"):
+        c.resolve_model(None)
+    c.autoload_context = 0
+    with pytest.raises(P.ProviderError, match="не загружена"):
+        c.resolve_model("a")
+    assert len([q for q in fake.requests if q.url.path == "/api/v1/models/load"]) == 1
+
+
+def test_lmstudio_autoload_leaves_a_loaded_model_alone_and_switch_uses_the_context():
+    fake = FakeOpenAI(native={"/api/v0/models": {"data": [
+        {"id": "a", "state": "not-loaded", "type": "llm"},
+        {"id": "b", "state": "loaded", "loaded_context_length": 70000, "type": "llm"}]},
+        "/api/v1/models": {"models": [{"type": "llm", "key": "a", "loaded_instances": []},
+                                      {"type": "llm", "key": "b", "loaded_instances": [{"id": "b"}]}]},
+        "/api/v1/models/load": {"status": "loaded"}, "/api/v1/models/unload": {"instance_id": "b"}})
+    c, _ = mk("lmstudio", key=None, fake=fake)
+    c.autoload_context = 32768
+    r = c.resolve_model("a")    # another model is loaded (e.g. by an agent): use it, do not reload anything
+    assert r["model"] == "b" and r["context"] == 70000
+    assert not [q for q in fake.requests if q.url.path == "/api/v1/models/load"]
+    c.switch_lmstudio_model("a")   # the explicit «сменить модель» loads with the same context
+    sent = [json.loads(q.content) for q in fake.requests if q.url.path == "/api/v1/models/load"]
+    assert sent == [{"model": "a", "context_length": 32768, "flash_attention": True}]
+
+
+def test_client_for_takes_autoload_context_from_options():
+    from app import options as opts_mod
+    prof = P.normalize_profile({"id": "lm", "name": "LM", "kind": "lmstudio", "base_url": "http://localhost:1234"})
+    assert P.client_for({}, prof).autoload_context == opts_mod.DEFAULTS["lmstudio_autoload_context"] == 65536
+    assert P.client_for({"lmstudio_autoload_context": 0}, prof).autoload_context == 0
