@@ -332,6 +332,20 @@ details.other-sources > .card { margin-bottom: 12px; }
 .assumption { font-style: italic; color: var(--text-muted); }
 .rag-answer-tail:empty { display: none; }
 
+/* ---- «Коротко:» summary line and fact chips (numbers, dates, results) in RAG answers ---- */
+.rag-answer .answer-summary { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; white-space: normal;
+  background: var(--surface-2); border-left: 4px solid var(--accent); border-radius: 8px;
+  padding: 10px 14px; margin: 0 0 14px; font-size: 16.5px; font-weight: 600; line-height: 1.5; }
+.rag-answer .summary-label { font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--accent); flex: none; }
+.rag-answer .summary-text { flex: 1 1 260px; min-width: 0; }
+.rag-answer code, .rag-answer.md-on code, .rag-answer .fact-chip {
+  font-family: var(--sans); font-size: .92em; font-weight: 600; font-variant-numeric: tabular-nums;
+  color: var(--text); background: var(--gold-soft);
+  border: 1px solid color-mix(in srgb, var(--gold) 40%, transparent);
+  border-radius: 6px; padding: 0 6px; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
+.rag-answer .answer-summary .summary-text code, .rag-answer .answer-summary .fact-chip { font-size: .95em; }
+
 
 /* ======================= Settings page ======================= */
 main:has(#tab-settings.active) { max-width: 1320px; }

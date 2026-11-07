@@ -333,7 +333,26 @@ function jumpToSource(id) {
 const mdOn = true;  // model answers are always rendered as Markdown (the on/off checkbox was removed)
 let lastView = null;   // function that re-renders the current answer (used by the Markdown toggle)
 
+// Concrete values the model put in `backticks` are <code> -> CSS chips; short **bold** text with a digit
+// (older answers, models that ignore the backticks rule) gets the same chip look - only a value, not a
+// bold heading like «Лагерь в Вифсаиде (май-октябрь 28 г.):».
+function chipify(html) {
+  return html.replace(/<strong>([^<:]{1,30})<\/strong>/g, (m, t) =>
+    /\d/.test(t) && t.trim().split(/\s+/).length <= 4 ? `<strong class="fact-chip">${t}</strong>` : m);
+}
+
+// The opening «Коротко: …» line (the result of a derived answer) goes into its own box above the answer.
 function renderAnswerHtml(text) {
+  const s = /^[ \t>*_#]*Коротко\s*:\**[ \t]*([^\n]*)(?:\n|$)/.exec(text || "");
+  if (!s) return chipify(renderAnswerBody(text));
+  const line = s[1].replace(/[*_]+$/, "").trim();
+  const rest = text.slice(s[0].length).replace(/^\s+/, "");
+  return `<div class="answer-summary"><span class="summary-label">Коротко</span>` +
+    `<span class="summary-text">${chipify(Md.render(line, { inline: linkifyCitations }).replace(/^<p>|<\/p>$/g, ""))}</span></div>` +
+    chipify(renderAnswerBody(rest));
+}
+
+function renderAnswerBody(text) {
   const fmt = mdOn
     ? (t) => Md.render(t, { inline: linkifyCitations, assumption: true })
     : (t) => linkifyCitations(escapeHtml(t)).replace(

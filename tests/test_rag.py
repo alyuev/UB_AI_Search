@@ -487,3 +487,11 @@ def test_followup_prefers_paragraphs_with_a_written_date_and_sends_section_title
     assert res["followup"]["added"][0] == "0:9.1" and len(res["followup"]["added"]) == 3
     assert ("hybrid", "год распятия Иисуса", 30) in s.calls
     assert "Документ 0. Перед распятием · Конец Иуды" in llm.chat_calls[1]["messages"][1]["content"]
+
+
+def test_prompts_ask_for_summary_line_and_fact_chips():
+    from app.llm import rag as R
+    assert "«Коротко:»" in R.INFERENCE_ADDENDUM and "Коротко: около `75 лет`" in R.INFERENCE_ADDENDUM
+    assert "Точной цифры для Алмы" not in R.INFERENCE_ADDENDUM       # no refusal-like opening in the example
+    assert "приблизительно" in R.INFERENCE_ADDENDUM and "Коротко" in R.INFERENCE_REMINDER
+    assert "backticks" in R.FORMATTING_PROMPT and "`80 лет`" in R.FORMATTING_PROMPT
