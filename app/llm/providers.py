@@ -84,6 +84,11 @@ KINDS = {
                          "с сайта. Это не официальный провайдер моделей, а посредник: условия и лимиты задаёт сам "
                          "сервис, он может изменить их или отключиться. Тексты абзацев и вопросы проходят через "
                          "его сервер — не отправляйте закрытые материалы."},
+    "claude_cli": {"title": "Claude CLI (Claude Code)", "icon": "☁", "default_url": "claude", "needs_key": False,
+                   "desc": "Установленная на этом компьютере программа Claude Code (команда claude). Ключ не нужен: "
+                           "используется ваш вход в Claude (подписка claude.ai или ключ API). Сначала установите "
+                           "Claude Code и один раз войдите в него в терминале. Тексты абзацев и вопросы "
+                           "отправляются в Anthropic."},
 }
 
 HF_WHOAMI = "https://huggingface.co/api/whoami-v2"
@@ -97,8 +102,13 @@ def host_of(url: str) -> str:
     return (urlparse(url or "").hostname or "").lower()
 
 
+def profile_host(prof: dict) -> str:
+    """Where the texts go, for the UI: the server host; Claude CLI has a command instead of an address."""
+    return "Claude CLI (anthropic.com)" if prof.get("kind") == "claude_cli" else host_of(prof.get("base_url") or "")
+
+
 def is_cloud(kind: str, base_url: str) -> bool:
-    if kind in ("openrouter", "huggingface"):
+    if kind in ("openrouter", "huggingface", "claude_cli"):
         return True
     host = host_of(base_url)
     if not host:
@@ -203,7 +213,10 @@ def validate_profile(d: dict, partial: bool = False) -> dict:
         if d.get("kind") not in KINDS:
             raise ValueError("Тип провайдера: выберите из списка")
         out["kind"] = d["kind"]
-    if "base_url" in d or not partial:
+    if ("base_url" in d or not partial) and d.get("kind") == "claude_cli":
+        from app.llm.claude_cli import validate_command
+        out["base_url"] = validate_command(str(d.get("base_url") or ""))
+    elif "base_url" in d or not partial:
         u = str(d.get("base_url") or "").strip().rstrip("/")
         pu = urlparse(u)
         if pu.scheme not in ("http", "https") or not pu.hostname:
@@ -283,13 +296,16 @@ def make_id(name: str, existing: set[str]) -> str:
 
 def public_info(settings: dict, prof: dict, model: Optional[str] = None) -> dict:
     """Key-free description of a provider for snapshots / UI."""
-    return {"id": prof["id"], "name": prof["name"], "kind": prof["kind"], "host": host_of(prof["base_url"]),
+    return {"id": prof["id"], "name": prof["name"], "kind": prof["kind"], "host": profile_host(prof),
             "is_cloud": is_cloud(prof["kind"], prof["base_url"]), "model": model}
 
 
-def client_for(settings: dict, prof: dict, timeout: Optional[float] = None) -> "ProviderClient":
+def client_for(settings: dict, prof: dict, timeout: Optional[float] = None):
     """Build a client: gating by allow_cloud_llm, key from the secret store / env."""
     check_allowed(settings, prof)
+    if prof["kind"] == "claude_cli":
+        from app.llm.claude_cli import ClaudeCliClient
+        return ClaudeCliClient(prof, timeout=timeout or prof.get("timeout") or settings.get("llm_timeout"))
     key = secrets_store.get_key(prof["id"], prof["kind"], prof["base_url"])
     app_headers = {}
     if prof["kind"] == "openrouter":

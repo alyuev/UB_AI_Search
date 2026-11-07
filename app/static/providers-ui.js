@@ -63,7 +63,7 @@ function renderProviders() {
         ${blocked ? `<span class="badge warn" title="Включите «Облачные модели» ниже">выключен</span>` : ""}
         <span class="prov-kind">${escapeHtml(p.kind_title)}</span></div>
       <dl class="prov-facts">
-        ${fact("Адрес", `<code>${escapeHtml(p.base_url || p.host)}</code>`)}
+        ${fact(p.kind === "claude_cli" ? "Программа" : "Адрес", `<code>${escapeHtml(p.base_url || p.host)}</code>`)}
         ${fact("Модель", p.model ? `<code>${escapeHtml(p.model)}</code>` : `<span class="err-text">не выбрана</span>`)}
         ${p.needs_key ? fact("Ключ", keyVal) : ""}
         ${(p.fallback_models || []).length ? fact("Запасные", p.fallback_models.map((m) => `<code>${escapeHtml(m)}</code>`).join(" → ")) : ""}
@@ -201,7 +201,8 @@ function openWizard(kind, pid) {
     : kind === "sharellm"
     ? `Токен создаётся на сайте sharellm.net в личном кабинете — откройте сайт сами в браузере. Токен хранится на этом компьютере в зашифрованном виде, в настройки, историю и журналы он не попадает.`
     : "Ключ нужен не всем серверам. Хранится зашифрованно в отдельном файле.";
-  const generic = !["lmstudio", "openrouter", "huggingface"].includes(kind);
+  const cli = kind === "claude_cli";
+  const generic = !["lmstudio", "openrouter", "huggingface", "claude_cli"].includes(kind);
   const presetUrl = !!k.default_url && k.needs_key === true;
   wiz.classList.remove("hidden");
   $("#prov-kinds").classList.add("hidden");
@@ -209,20 +210,21 @@ function openWizard(kind, pid) {
     <div class="hint-text">${escapeHtml(k.desc)}</div>
     <div class="set-grid wiz-grid">
       ${wizRow("Название", `<input type="text" id="w-name" maxlength="60" />`)}
-      ${wizRow("Адрес", `<input type="text" id="w-url" placeholder="${escapeHtml(k.default_url || "https://…/v1")}" />`, presetUrl ? "подставлен автоматически — менять нужно, только если сервис сменил адрес" : "")}
+      ${cli ? wizRow("Программа", `<input type="text" id="w-url" placeholder="claude" />`, "команда запуска Claude Code; обычно просто claude. Если программа не находится — укажите полный путь к ней")
+        : wizRow("Адрес", `<input type="text" id="w-url" placeholder="${escapeHtml(k.default_url || "https://…/v1")}" />`, presetUrl ? "подставлен автоматически — менять нужно, только если сервис сменил адрес" : "")}
       ${needsKey ? wizRow("Ключ API",
         `<div class="key-line"><input type="password" id="w-key" autocomplete="off" spellcheck="false" placeholder="${p && p.has_key ? "оставьте пустым, чтобы не менять" : "вставьте ключ"}" />
            <button type="button" class="secondary small" id="w-key-show">Показать</button></div>
          ${p && p.has_key ? `<label class="check-inline"><input type="checkbox" id="w-key-clear" /> удалить сохранённый ключ (…${escapeHtml(p.last4 || "")})</label>` : ""}`, keyHint) : ""}
-      ${wizRow("Модель по умолчанию", `<input type="text" id="w-model" placeholder="можно выбрать позже из списка" />`)}
+      ${wizRow("Модель по умолчанию", `<input type="text" id="w-model" placeholder="${cli ? "sonnet" : "можно выбрать позже из списка"}" />`, cli ? "sonnet, opus или haiku — программа сама возьмёт последнюю версию; можно и полное название модели" : "")}
       ${wizRow("Запасные модели", `<textarea id="w-fallback" rows="2" placeholder="по одному названию в строке"></textarea>`, kind === "openrouter"
         ? "необязательно: если основная модель занята или не отвечает, программа сама попробует следующую по списку. Подойдёт и «openrouter/free» — сервис сам выберет свободную бесплатную модель"
         : "необязательно: если основная модель не отвечает, программа попробует следующую по списку")}
       ${wizRow("Таймаут, секунд", `<input type="number" id="w-timeout" min="1" max="36000" placeholder="как в общих настройках" />`)}
       ${kind !== "lmstudio" ? wizRow("Размер контекста, токенов", `<input type="number" id="w-ctx" min="512" placeholder="определить автоматически" />`, "заполняйте, только если программа неверно определяет размер") : ""}
-      ${wizRow("Свои параметры модели", `<div class="inline-actions"><input type="number" id="w-temp" step="0.05" min="0" max="2" placeholder="температура" style="width:120px" />
+      ${cli ? "" : wizRow("Свои параметры модели", `<div class="inline-actions"><input type="number" id="w-temp" step="0.05" min="0" max="2" placeholder="температура" style="width:120px" />
           <input type="number" id="w-maxtok" min="1" placeholder="макс. токенов" style="width:130px" /></div>`, "необязательно: заменяют общие настройки только для этого провайдера")}
-      ${wizRow("Дополнительные заголовки", `<textarea id="w-headers" rows="2" placeholder="Имя: значение (по одному в строке)"></textarea>`, "необязательно")}
+      ${cli ? "" : wizRow("Дополнительные заголовки", `<textarea id="w-headers" rows="2" placeholder="Имя: значение (по одному в строке)"></textarea>`, "необязательно")}
       ${generic ? wizRow("Рассуждение", `<label class="check-inline"><input type="checkbox" id="w-reason" /> передавать серверу режим рассуждения (reasoning_effort)</label>`, "включайте, только если сервер это поддерживает") : ""}
     </div>
     <div class="set-actions"><button type="button" id="w-save">${p ? "Сохранить" : "Добавить"}</button>
@@ -235,9 +237,9 @@ function openWizard(kind, pid) {
     $("#w-timeout").value = p.timeout || "";
     $("#w-fallback").value = (p.fallback_models || []).join("\n");
     if ($("#w-ctx")) $("#w-ctx").value = p.context_length || "";
-    $("#w-temp").value = p.params?.temperature ?? "";
-    $("#w-maxtok").value = p.params?.max_tokens ?? "";
-    $("#w-headers").value = headersToText(p.extra_headers);
+    if ($("#w-temp")) $("#w-temp").value = p.params?.temperature ?? "";
+    if ($("#w-maxtok")) $("#w-maxtok").value = p.params?.max_tokens ?? "";
+    if ($("#w-headers")) $("#w-headers").value = headersToText(p.extra_headers);
     if ($("#w-reason")) $("#w-reason").checked = !!p.send_reasoning_effort;
   }
   if ($("#w-key-show")) $("#w-key-show").addEventListener("click", () => {
@@ -263,7 +265,7 @@ async function saveWizard(kind, pid) {
     if (num("#w-maxtok") !== null) params.max_tokens = num("#w-maxtok");
     const body = {
       name: $("#w-name").value.trim(), kind, base_url: $("#w-url").value.trim(), default_model: $("#w-model").value.trim(),
-      timeout: num("#w-timeout"), extra_headers: textToHeaders($("#w-headers").value), params,
+      timeout: num("#w-timeout"), extra_headers: $("#w-headers") ? textToHeaders($("#w-headers").value) : {}, params,
       fallback_models: $("#w-fallback").value.split("\n").map((x) => x.trim()).filter(Boolean),
     };
     if ($("#w-ctx")) body.context_length = num("#w-ctx");
@@ -275,7 +277,8 @@ async function saveWizard(kind, pid) {
     setStatus($("#w-status"), "Сохранение…");
     const r = await api(pid ? `/api/llm/providers/${pid}` : "/api/llm/providers", jsonPost(pid ? "PUT" : "POST", body));
     await loadProvidersUi();
-    if (!pid && k.default_url && k.needs_key === true && !provState.allow_cloud_llm) {
+    const k = provState.kinds.find((x) => x.id === kind);
+    if (!pid && k.default_url && (k.needs_key === true || kind === "claude_cli") && !provState.allow_cloud_llm) {
       $("#prov-wizard").classList.remove("hidden");
       $("#prov-wizard").innerHTML = `<div class="msg-inline warn">Провайдер добавлен, но облачные модели пока выключены. Нажмите «Разрешить облачные модели…» выше и подтвердите — после этого можно проверить соединение и выбрать модель.</div>`;
     } else if (!pid) { provSel = r.id; renderProviders(); openModels(r.id); }
@@ -292,7 +295,7 @@ async function openModels(pid) {
   box.innerHTML = `<h4>Модели: ${provIcon(p)} ${escapeHtml(p.name)}</h4>
     <div class="inline-actions">
       <input type="text" id="m-q" placeholder="поиск по названию…" style="min-width:220px" />
-      ${p.kind === "lmstudio" ? "" : `<label class="check-inline"><input type="checkbox" id="m-free" ${p.kind === "huggingface" ? "checked" : ""} /> ${p.kind === "huggingface" ? "только дешёвые (хватит бесплатного кредита)" : "только бесплатные"}</label>`}
+      ${["lmstudio", "claude_cli"].includes(p.kind) ? "" : `<label class="check-inline"><input type="checkbox" id="m-free" ${p.kind === "huggingface" ? "checked" : ""} /> ${p.kind === "huggingface" ? "только дешёвые (хватит бесплатного кредита)" : "только бесплатные"}</label>`}
       <label class="check-inline">контекст от <select id="m-ctx"><option value="0">любой</option><option value="16000">16K</option><option value="32000">32K</option><option value="100000">100K</option><option value="200000">200K</option></select></label>
       <button type="button" class="secondary small" id="m-refresh">Обновить список</button></div>
     ${p.kind === "huggingface" ? `<div class="hint-text">Полностью бесплатных моделей у Hugging Face нет: каждому аккаунту даётся небольшой ежемесячный кредит (около $0,10). Поэтому показаны самые дешёвые модели — цена до $0,10 за 1 млн токенов на входе и до $0,30 на выходе; цены указаны в долларах за 1 млн токенов (вход / выход). Когда кредит кончится, сервис ответит ошибкой 402 до начала следующего месяца.</div>` : ""}

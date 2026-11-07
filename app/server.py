@@ -1025,7 +1025,7 @@ def _public_profile(settings: dict, prof: dict) -> dict:
     kind = providers.KINDS[prof["kind"]]
     cloud = providers.is_cloud(prof["kind"], prof["base_url"])
     is_active = prof["id"] == providers.active_id(settings)
-    return {**prof, "host": providers.host_of(prof["base_url"]), "is_cloud": cloud, "active": is_active,
+    return {**prof, "host": providers.profile_host(prof), "is_cloud": cloud, "active": is_active,
             "icon": "☁" if cloud else "🖥", "kind_title": kind["title"], "needs_key": kind["needs_key"],
             "model": (settings.get("llm_model") or prof.get("default_model") or "") if is_active
             else prof.get("default_model") or "",
@@ -1264,7 +1264,8 @@ def api_llm_models(provider: Optional[str] = None, q: str = "", free_only: bool 
     if text_only:  # for the picker on the main page: the user's hidden models out, the model in memory first
         hidden = {h.strip().lower() for h in config.load_settings().get("llm_hidden_models") or []}
         models = [m for m in models if str(m.get("id") or "").lower() not in hidden]
-        models = sorted(models, key=lambda m: (m.get("loaded") is not True, str(m.get("id")).lower()))
+        if any(m.get("loaded") is not None for m in models):   # LM Studio; others (Claude CLI) keep their own order
+            models = sorted(models, key=lambda m: (m.get("loaded") is not True, str(m.get("id")).lower()))
     return {"models": models, "total": total,
             "provider": client.profile["id"] if hasattr(client, "profile") else provider}
 
