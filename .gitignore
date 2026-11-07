@@ -37,3 +37,8 @@ bench/subset.json
 bench/foreword/paper0.json
 bench/translation/dataset.json
 bench/translation/results.json
+
+# --- built launcher (scripts/build_launcher.py) ---
+/SmartSearch.exe
+/scripts/sandbox/results/
+data/webview/

@@ -4,7 +4,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.core.indexer import build_index
 
 ROOT = Path(__file__).resolve().parent.parent
-JSON_PATH = ROOT / "urantia_bilingual_rag.json"
+JSON_PATH = ROOT / "corpus" / "urantia_bilingual_rag.json"
 
 models = ["multilingual-e5-small", "multilingual-e5-base", "bge-m3"]
 results = {}

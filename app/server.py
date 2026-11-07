@@ -1624,13 +1624,13 @@ def api_books_select(req: BookSelectRequest):
 
 @app.get("/api/source-files")
 def api_source_files():
-    """List *.json/*.md files in the project root, for the index-source picker
-    (the browser can't hand us an arbitrary local path)."""
-    patterns = ["*.json", "*.md"]
-    files = []
-    for pat in patterns:
-        files.extend(glob.glob(os.path.join(config.ROOT, pat)))
-    names = sorted(os.path.basename(f) for f in files)
+    """List *.json/*.md source files for the index-source picker (the browser can't hand us an
+    arbitrary local path): the «corpus» folder first, then the program folder (older layout).
+    Names are relative to the program folder, e.g. «corpus/book.json»."""
+    names = []
+    for folder, prefix in ((config.CORPUS_DIR, "corpus/"), (config.ROOT, "")):
+        for pat in ("*.json", "*.md"):
+            names += sorted(prefix + os.path.basename(f) for f in glob.glob(os.path.join(folder, pat)))
     return {"files": [n for n in names if n.lower() not in ("readme.md",)]}
 
 

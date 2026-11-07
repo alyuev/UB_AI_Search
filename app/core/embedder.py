@@ -577,7 +577,9 @@ class LlamaCppEmbedder:
             "--port", str(port), "--host", "127.0.0.1",
         ]
         self._proc = subprocess.Popen(
-            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=str(ROOT)
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=str(ROOT),
+            # no console window of its own when the app runs windowless (SmartSearch.exe / pythonw)
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         try:
             self._wait_ready(startup_timeout)

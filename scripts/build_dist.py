@@ -5,9 +5,11 @@
     .venv\\Scripts\\python scripts\\build_dist.py --mode both --no-zip
 
 Output (default --out dist):
-    dist/<mode>/BilingualTextAnalyzer/        the folder (run start.bat inside)
+    <release>/Программа/BilingualTextAnalyzer/   the program as the user sees it (run SmartSearch.exe)
     dist/BilingualTextAnalyzer-<mode>.zip     the same, zipped (top-level folder BilingualTextAnalyzer/)
-    dist/sizes_<mode>.json                    size breakdown (used by docs/06_packaging.md)
+    <release>/Архивы/BilingualTextAnalyzer-<mode>.zip   the archive to hand out
+    <release>/.build/sizes_<mode>.json         size breakdown (used by docs/06_packaging.md)
+  <release> = ../SmartSearch-Release (next to the source folder), see --out
 
 What goes in:
   * python/            official python.org *embeddable* CPython (same minor version as .venv), with
@@ -22,12 +24,12 @@ What goes in:
   The ONNX weights (hundreds of MB) are NOT shipped: if Vulkan is unavailable on a machine, the
   semantic part of search is disabled (full-text search keeps working) until the ONNX model is
   added -- documented in README.md / docs/06_packaging.md.
-  builder mode additionally: urantia_bilingual_rag.json/.md, data/titles/, tools/extract_epub_titles.py,
+  builder mode additionally: corpus/urantia_bilingual_rag.json/.md, data/titles/, tools/extract_epub_titles.py,
   tools/convert_vectors.py.
 Excluded always: .venv, tests/, bench/, logs/, other models, scratch DBs, the EPUB sources, __pycache__,
 data/secrets.json (API keys of LLM providers), data/settings.json, data/history.db, .env files.
 
-The embeddable zip is cached in dist/_cache (downloaded once from python.org if missing).
+The embeddable zip is cached in <release>/.build/cache (downloaded once from python.org if missing).
 """
 from __future__ import annotations
 
@@ -50,7 +52,7 @@ DIST_NAME = "BilingualTextAnalyzer"
 # Top-level distributions the app imports at runtime (directly or lazily).
 RUNTIME_TOP = [
     "fastapi", "uvicorn", "httpx", "numpy", "pymorphy3", "pymorphy3-dicts-ru", "psutil",
-    "tokenizers",
+    "tokenizers", "pywebview",
 ]
 # Dependencies that are installed in .venv but are NOT needed at runtime for this app
 # (verified by the dist smoke test): hub client (offline), progress bars, symbolic math that
@@ -64,6 +66,12 @@ RUNTIME_EXCLUDE = {
 }
 
 LLAMA_KEEP_EXE = {"llama-server.exe"}
+# Finished program and archives live OUTSIDE the source tree, so «what the user gets» is never mixed
+# with sources:  <out>/Программа/BilingualTextAnalyzer, <out>/Программа (для сборки баз)/...,
+# <out>/Архивы/*.zip; build cache and size reports in <out>/.build (hidden).
+RELEASE_DIR = ROOT.parent / "SmartSearch-Release"
+MODE_FOLDER = {"user": "Программа", "builder": "Программа (для сборки баз)"}
+VC_RUNTIME_DLLS = ["msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "vcruntime140.dll", "vcruntime140_1.dll"]
 
 
 def human(n: float) -> str:
@@ -91,8 +99,11 @@ def norm(name: str) -> str:
 def fetch_embeddable_python(out: Path) -> Path:
     ver = "%d.%d.%d" % sys.version_info[:3]
     name = f"python-{ver}-embed-amd64.zip"
-    cache = out / "_cache"
+    cache = out / ".build" / "cache"
     cache.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":  # keep the service folder out of sight in Explorer
+        import subprocess
+        subprocess.run(["attrib", "+h", str(out / ".build")], check=False)
     zpath = cache / name
     if not zpath.exists():
         url = f"https://www.python.org/ftp/python/{ver}/{name}"
@@ -277,7 +288,7 @@ def build(mode: str, out: Path, book_id: str, zpath: Path, make_zip: bool, model
     settings = config.load_settings()
     model = model or settings.get("embedding_model", "bge-m3")
     runtime = runtime or settings.get("embedding_runtime", "llamacpp-vulkan")
-    folder = out / mode / DIST_NAME
+    folder = out / MODE_FOLDER[mode] / DIST_NAME
     if folder.exists():
         shutil.rmtree(folder)
     folder.mkdir(parents=True)
@@ -296,6 +307,9 @@ def build(mode: str, out: Path, book_id: str, zpath: Path, make_zip: bool, model
     copy_tree(ROOT / "app", folder / "app")
     copy_file(ROOT / "main.py", folder / "main.py")
     write_bat(folder / "start.bat")
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import build_launcher
+    build_launcher.build(folder / "SmartSearch.exe")  # window mode (pywebview), no console
     copy_file(ROOT / "README.md", folder / "README.md")
     copy_file(ROOT / "docs" / "new_book_howto.md", folder / "docs" / "new_book_howto.md")
     sizes["app_code"] = dir_size(folder / "app")
@@ -321,6 +335,9 @@ def build(mode: str, out: Path, book_id: str, zpath: Path, make_zip: bool, model
     # llama.cpp
     for f in llama_files(emb.LLAMACPP_BIN_DIR):
         copy_file(f, folder / "tools" / "llama.cpp" / "bin" / f.name)
+    # Visual C++ runtime next to llama-server: a clean Windows may not have it (redistributable DLLs)
+    for n in VC_RUNTIME_DLLS:
+        copy_file(Path(r"C:\Windows\System32") / n, folder / "tools" / "llama.cpp" / "bin" / n)
     sizes["llama_cpp_bin"] = dir_size(folder / "tools" / "llama.cpp")
     sizes["llama_cpp_bin_full_original"] = dir_size(emb.LLAMACPP_BIN_DIR)
 
@@ -328,19 +345,20 @@ def build(mode: str, out: Path, book_id: str, zpath: Path, make_zip: bool, model
 
     if mode == "builder":
         for name in ("urantia_bilingual_rag.json", "urantia_bilingual_rag.md"):
-            copy_file(ROOT / name, folder / name)
+            copy_file(config.CORPUS_DIR / name, folder / "corpus" / name)
         copy_tree(ROOT / "data" / "titles", folder / "data" / "titles")
         copy_file(ROOT / "tools" / "extract_epub_titles.py", folder / "tools" / "extract_epub_titles.py")
         copy_file(ROOT / "tools" / "convert_vectors.py", folder / "tools" / "convert_vectors.py")
-        sizes["source_json"] = (folder / "urantia_bilingual_rag.json").stat().st_size
-        sizes["source_md"] = (folder / "urantia_bilingual_rag.md").stat().st_size
+        sizes["source_json"] = (folder / "corpus" / "urantia_bilingual_rag.json").stat().st_size
+        sizes["source_md"] = (folder / "corpus" / "urantia_bilingual_rag.md").stat().st_size
 
     leaked = find_secret_files(folder)
     if leaked:
         raise SystemExit("refusing to package secrets / personal data: " + ", ".join(str(f) for f in leaked))
     sizes["folder_total"] = dir_size(folder)
     if make_zip:
-        zp = out / f"{DIST_NAME}-{mode}.zip"
+        (out / "Архивы").mkdir(parents=True, exist_ok=True)
+        zp = out / "Архивы" / f"{DIST_NAME}-{mode}.zip"
         zp.unlink(missing_ok=True)
         print(f"zipping -> {zp} ...")
         with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
@@ -349,7 +367,8 @@ def build(mode: str, out: Path, book_id: str, zpath: Path, make_zip: bool, model
                     zf.write(f, Path(DIST_NAME) / f.relative_to(folder))
         sizes["zip"] = zp.stat().st_size
     sizes["build_seconds"] = round(time.time() - t0)
-    (out / f"sizes_{mode}.json").write_text(json.dumps(sizes, indent=1), encoding="utf-8")
+    (out / ".build").mkdir(parents=True, exist_ok=True)
+    (out / ".build" / f"sizes_{mode}.json").write_text(json.dumps(sizes, indent=1), encoding="utf-8")
     print(f"=== {mode} done in {sizes['build_seconds']}s")
     for k, v in sizes.items():
         print(f"  {k:<30} {human(v) if k != 'build_seconds' else str(v) + ' s'}")
@@ -359,7 +378,8 @@ def build(mode: str, out: Path, book_id: str, zpath: Path, make_zip: bool, model
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--mode", choices=["user", "builder", "both"], default="user")
-    ap.add_argument("--out", type=Path, default=ROOT / "dist")
+    ap.add_argument("--out", type=Path, default=RELEASE_DIR,
+                    help="release folder (default: SmartSearch-Release next to the source folder)")
     ap.add_argument("--book-id", default="urantia")
     ap.add_argument("--model", default=None, help="default: embedding_model from settings.json")
     ap.add_argument("--runtime", default=None)

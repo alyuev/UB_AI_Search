@@ -10,7 +10,7 @@ from app.core.parser import parse_json, parse_md
 from app.core.search import _escape_fts_query, Searcher
 
 ROOT = Path(__file__).resolve().parent.parent
-JSON_PATH = ROOT / "urantia_bilingual_rag.json"
+JSON_PATH = ROOT / "corpus" / "urantia_bilingual_rag.json"
 
 
 # --------------------------------------------------------------------------

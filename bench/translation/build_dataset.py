@@ -18,7 +18,7 @@ import json
 import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-SOURCE_JSON = os.path.join(ROOT, "urantia_bilingual_rag.json")
+SOURCE_JSON = os.path.join(ROOT, "corpus", "urantia_bilingual_rag.json")
 OUT_JSON = os.path.join(os.path.dirname(__file__), "dataset.json")
 
 # (paragraph id, case type, expect_flagged, RU text or None for "official RU unchanged", note)

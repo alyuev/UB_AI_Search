@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 MODELS_DIR = ROOT / "models"
 LIBRARY_DIR = ROOT / "library"
+CORPUS_DIR = ROOT / "corpus"      # source texts of books (.json/.md/.epub) to build databases from
 LOGS_DIR = ROOT / "logs"
 DATA_DIR = ROOT / "data"
 

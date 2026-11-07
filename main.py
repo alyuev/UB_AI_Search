@@ -3,6 +3,8 @@
 Options:
   --port N        start looking for a free port at N (env SMARTSEARCH_PORT works too)
   --no-browser    do not open the browser (env SMARTSEARCH_NO_BROWSER=1 works too)
+  --desktop       show the UI in its own app window (pywebview / WebView2) instead of the browser;
+                  closing the window stops the program (env SMARTSEARCH_DESKTOP=1 works too)
   --host ADDR     listen on ADDR, e.g. 0.0.0.0 so AI agents on other machines (WSL, LAN) can reach
                   /mcp and /api/agent/* (env SMARTSEARCH_HOST); needs SMARTSEARCH_AGENT_TOKEN
 """
@@ -64,8 +66,115 @@ def _arg_value(name: str):
     return None
 
 
+def _redirect_missing_streams():
+    """Under pythonw.exe there is no console: stdout/stderr are None and uvicorn's logging would fail."""
+    if sys.stdout is not None and sys.stderr is not None:
+        return
+    os.makedirs("logs", exist_ok=True)
+    f = open(os.path.join("logs", "console.log"), "a", encoding="utf-8", buffering=1)
+    if sys.stdout is None:
+        sys.stdout = f
+    if sys.stderr is None:
+        sys.stderr = f
+
+
+def _webview2_available() -> bool:
+    """True when pywebview can show the window with Edge WebView2 (Windows 10/11 normally have it)."""
+    if os.environ.get("SMARTSEARCH_FORCE_BROWSER"):
+        return False
+    try:
+        if sys.platform != "win32":
+            import webview  # noqa: F401  (GTK/Qt/Cocoa: let pywebview decide)
+            return True
+        import webview.platforms.winforms as wf
+        return getattr(wf, "renderer", "") == "edgechromium"
+    except Exception as exc:  # pythonnet/.NET missing, broken install...
+        print(f"pywebview unavailable: {exc!r}", flush=True)
+        return False
+
+
+def _message_box(text: str, title: str = "Bilingual Text Analyzer"):
+    if sys.platform == "win32":
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, text, title, 0x40 | 0x40000)  # MB_ICONINFORMATION | MB_TOPMOST
+    else:
+        print(text, flush=True)
+
+
+def run_browser_fallback(server, url: str):
+    """No WebView2: serve as usual, open the browser, and keep a small dialog as the «quit» button."""
+    t = threading.Thread(target=server.run, daemon=True, name="uvicorn")
+    t.start()
+    while not server.started and t.is_alive():
+        time.sleep(0.1)
+    if not server.started:
+        _message_box("Программа не смогла запуститься. Подробности в папке logs.")
+        return
+    if not os.environ.get("SMARTSEARCH_NO_BROWSER"):
+        webbrowser.open(url)
+
+    def dialog():
+        _message_box("В этой Windows нет компонента Microsoft Edge WebView2, поэтому программа открыта "
+                     f"в браузере:\n\n{url}\n\nЕго можно установить бесплатно: "
+                     "https://go.microsoft.com/fwlink/p/?LinkId=2124703\n\n"
+                     "Нажмите «ОК», чтобы завершить работу программы.")
+        server.should_exit = True
+
+    threading.Thread(target=dialog, daemon=True).start()
+    t.join()
+
+
+def _set_window_icon(window):
+    ico = os.path.abspath(os.path.join("app", "static", "icon.ico"))
+    if sys.platform != "win32" or not os.path.exists(ico):
+        return
+    try:
+        from System.Drawing import Icon  # pythonnet, loaded by pywebview's WinForms backend
+        form = window.native
+        form.Invoke(__import__("System").Action(lambda: setattr(form, "Icon", Icon(ico))))
+    except Exception as exc:
+        print(f"window icon not set: {exc!r}", flush=True)
+
+
+def run_desktop(server, url: str):
+    """Server in a background thread, the UI in a native window on the main thread."""
+    if not _webview2_available():
+        return run_browser_fallback(server, url)
+    import webview
+
+    webview.settings["ALLOW_DOWNLOADS"] = True           # «Экспорт в Markdown», prompt presets
+    webview.settings["OPEN_EXTERNAL_LINKS_IN_BROWSER"] = True
+
+    t = threading.Thread(target=server.run, daemon=True, name="uvicorn")
+    t.start()
+    while not server.started and t.is_alive():
+        time.sleep(0.1)
+    if not server.started:
+        return  # server failed to start; the error is already logged
+
+    window = webview.create_window("Bilingual Text Analyzer", url, width=1400, height=900,
+                                   min_size=(800, 500), text_select=True)
+
+    def watch_server():
+        # restart from the settings page stops uvicorn: close the window, main() spawns the new process
+        t.join()
+        try:
+            window.destroy()
+        except Exception:
+            pass
+
+    threading.Thread(target=watch_server, daemon=True).start()
+    window.events.shown += lambda: _set_window_icon(window)
+    webview.start(private_mode=False, storage_path=os.path.abspath(os.path.join("data", "webview")))
+    server.should_exit = True   # window closed by the user
+    t.join(timeout=15)
+
+
 def main():
     global HOST
+    desktop = "--desktop" in sys.argv or bool(os.environ.get("SMARTSEARCH_DESKTOP"))
+    if desktop:
+        _redirect_missing_streams()
     HOST = _arg_value("--host") or os.environ.get("SMARTSEARCH_HOST") or "127.0.0.1"
     if HOST not in ("127.0.0.1", "localhost", "::1"):
         from app.agent_api import agent_token
@@ -92,7 +201,7 @@ def main():
         time.sleep(1.0)
         webbrowser.open(url)
 
-    if "--no-browser" not in sys.argv and not os.environ.get("SMARTSEARCH_NO_BROWSER"):
+    if not desktop and "--no-browser" not in sys.argv and not os.environ.get("SMARTSEARCH_NO_BROWSER"):
         threading.Thread(target=open_browser, daemon=True).start()
     print(f"SmartSearch запускается: {url}", flush=True)
     server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=port, log_level="info"))
@@ -108,9 +217,12 @@ def main():
                   "  Чтобы остановить программу, закройте это окно.", line, "",
                   sep="\n", flush=True)
 
-    threading.Thread(target=print_banner, daemon=True).start()
     app.state.uvicorn_server = server   # POST /api/restart stops it and sets restart_requested
-    server.run()
+    if desktop:
+        run_desktop(server, url)
+    else:
+        threading.Thread(target=print_banner, daemon=True).start()
+        server.run()
     if getattr(app.state, "restart_requested", False):
         print("Перезапуск…")
         argv = [a for a in sys.argv]

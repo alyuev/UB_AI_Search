@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from app.core.indexer import build_index
 
-SRC = ROOT / "urantia_bilingual_rag.json"
+SRC = ROOT / "corpus" / "urantia_bilingual_rag.json"
 OUT_JSON = Path(__file__).parent / "paper0.json"
 DB = Path(__file__).parent / "paper0.db"
 
