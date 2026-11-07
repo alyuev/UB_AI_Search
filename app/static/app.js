@@ -120,7 +120,20 @@ function pollJob(jobId, panel, onDone) {
 let lastQuery = "";
 
 $("#query-btn").addEventListener("click", () => runQuery());
-$("#query-input").addEventListener("keydown", (e) => { if (e.key === "Enter") runQuery(); });
+$("#query-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); runQuery(); }
+});
+
+// The query box grows in height with a long query (up to 40% of the window, then it scrolls).
+function autosizeQuery() {
+  const box = $("#query-input");
+  box.style.height = "auto";
+  const max = window.innerHeight * 0.4;
+  box.style.height = Math.min(box.scrollHeight + 2, max) + "px";
+  box.style.overflowY = box.scrollHeight + 2 > max ? "auto" : "hidden";
+}
+$("#query-input").addEventListener("input", autosizeQuery);
+window.addEventListener("resize", autosizeQuery);
 
 function currentQMode() {
   return $("#qmode-select").value;
@@ -1110,6 +1123,7 @@ function applyEntryToForm(e) {
   settingQuery = true;
   $("#query-input").value = e.query;
   settingQuery = false;
+  autosizeQuery();
   const sel = $("#qmode-select");
   const m = e.mode === "rag" && e.params && e.params.overview ? "overview" : e.mode;
   if ([...sel.options].some((o) => o.value === m)) { sel.value = m; sel.dispatchEvent(new Event("change")); }
@@ -1166,7 +1180,6 @@ async function loadRecent() {
       recentQueries.push({ query: e.query, mode: e.mode, params: e.params });
       if (recentQueries.length >= 15) break;
     }
-    $("#recent-queries").innerHTML = recentQueries.map((r) => `<option value="${escapeHtml(r.query)}"></option>`).join("");
   } catch (e) { console.error("recent queries:", e); }
 }
 
@@ -1182,7 +1195,7 @@ $("#query-input").addEventListener("keydown", (ev) => {
   } else if (ev.key === "ArrowDown" && recentIdx >= 0) {
     ev.preventDefault();
     recentIdx -= 1;
-    if (recentIdx < 0) { settingQuery = true; box.value = ""; settingQuery = false; }
+    if (recentIdx < 0) { settingQuery = true; box.value = ""; settingQuery = false; autosizeQuery(); }
     else { const r = recentQueries[recentIdx]; applyEntryToForm({ query: r.query, mode: r.mode, params: r.params }); }
   }
 });
@@ -1201,6 +1214,7 @@ loadRecent();
   const q = new URLSearchParams(location.hash.slice(1)).get("q");
   if (q) {
     $("#query-input").value = q;
+    autosizeQuery();
     history.replaceState(null, "", location.pathname);
   }
 })();

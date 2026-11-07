@@ -110,6 +110,9 @@ main { max-width: 1080px; margin: 28px auto; padding: 0 24px; }
   flex: 1 1 100%; min-width: 240px; padding: 14px 18px; border-radius: 16px; border: 1px solid var(--border);
   background: var(--bg-card); color: var(--text); font-size: 17px; box-shadow: var(--shadow); outline: none;
   transition: border-color .15s, box-shadow .15s;
+  /* a textarea that grows with the text (autosizeQuery in app.js); scrolls only past max-height */
+  display: block; font-family: inherit; line-height: 1.45; resize: none; overflow-y: hidden;
+  max-height: 40vh; box-sizing: border-box;
 }
 #query-input:focus { border-color: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft), var(--shadow); }
 #qmode-select, #search-sort {

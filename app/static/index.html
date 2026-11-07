@@ -29,9 +29,8 @@
   <!-- ===================== SEARCH / RAG / TRANSLATION TAB ===================== -->
   <section id="tab-search" class="tab-pane active">
     <div class="search-controls">
-      <input id="query-input" type="text" list="recent-queries" autocomplete="off"
-             placeholder="Введите запрос… (↑ — прошлые запросы)" />
-      <datalist id="recent-queries"></datalist>
+      <textarea id="query-input" rows="1" autocomplete="off" spellcheck="true"
+             placeholder="Введите запрос… (↑ — прошлые запросы, Shift+Enter — новая строка)"></textarea>
       <select id="qmode-select" title="Режим поиска">
         <option value="rag" selected>Вопрос к тексту</option>
         <option value="overview" title="Модель читает все разделы, где встречается главное слово вопроса, и сводит полный ответ. Несколько минут.">Обзор по всей книге</option>
