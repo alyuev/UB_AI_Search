@@ -318,7 +318,7 @@ def test_exact_replay_uses_stored_prompts_model_params_and_survives_deleted_pres
     assert live_searcher.fts_weights is None
     # the replay is a history entry of its own, pointing at the original
     e2 = api.get(f"/api/history/{last_history_id(api)}").json()
-    assert e2["id"] != e1 and e2["params"] == {"k": 5, "replay": e1}
+    assert e2["id"] != e1 and {k: v for k, v in e2["params"].items() if k != "book_ids"} == {"k": 5, "replay": e1}
     # a normal run afterwards is unaffected by the replay
     spy.clear()
     run_rag(api)

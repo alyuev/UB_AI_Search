@@ -35,6 +35,8 @@ DEFAULT_SETTINGS = {
     "embedding_runtime": "llamacpp-vulkan",
     "device": "auto",
     "active_book": "urantia",
+    "search_books": [],       # books the search covers; [] = just the active one
+    "book_colors": {},        # book_id -> "#rrggbb" chosen in «О книге»; missing = automatic colour
     "fts_mode_hybrid": "or",  # "and" | "or" | "and_fallback_or"
     "fts_stopwords": True,  # drop stop words from unquoted FTS terms
     "fts_mode_standalone": "or",  # quoted phrases stay exact; AND+fallback lost recall on Paper 0 eval

@@ -40,6 +40,14 @@ def client(tmp_path_factory):
     return TestClient(app)
 
 
+def _src_json(client):
+    """Any existing file with a supported extension: build_index is faked in these tests."""
+    from app import config
+    p = config.DATA_DIR / "src.json"
+    p.write_text("[]", encoding="utf-8")
+    return p
+
+
 def test_status_endpoint(client):
     r = client.get("/api/status")
     assert r.status_code == 200
@@ -183,7 +191,7 @@ def test_index_job_cancel_keeps_old_db_loaded(client, monkeypatch):
 
     monkeypatch.setattr(server.core_indexer, "build_index", fake_build)
     r = client.post("/api/jobs/index", json={
-        "json_path": __file__, "model_name": "bge-m3", "book_id": "test_book", "book_name": "T"})
+        "json_path": str(_src_json(client)), "model_name": "bge-m3", "book_id": "test_book", "book_name": "T"})
     job = _wait_job(client, r.json()["job_id"])
     assert job["status"] == "cancelled", job
     assert job["result"]["cancelled"] is True
@@ -200,7 +208,7 @@ def test_index_job_failure_is_reported_and_db_stays_loaded(client, monkeypatch):
 
     monkeypatch.setattr(server.core_indexer, "build_index", boom)
     r = client.post("/api/jobs/index", json={
-        "json_path": __file__, "model_name": "bge-m3", "book_id": "test_book", "book_name": "T"})
+        "json_path": str(_src_json(client)), "model_name": "bge-m3", "book_id": "test_book", "book_name": "T"})
     job = _wait_job(client, r.json()["job_id"])
     assert job["status"] == "error" and "garbage" in job["error"]
     assert state.conn is not None and state.searcher is not None
@@ -211,7 +219,7 @@ def test_index_job_validates_source_and_book_id(client):
         "json_path": "does_not_exist.json", "model_name": "bge-m3", "book_id": "ok_id", "book_name": "T"})
     assert r.status_code == 400 and "не найден" in r.json()["detail"]
     r = client.post("/api/jobs/index", json={
-        "json_path": __file__, "model_name": "bge-m3", "book_id": "bad id/..", "book_name": "T"})
+        "json_path": str(_src_json(client)), "model_name": "bge-m3", "book_id": "bad id/..", "book_name": "T"})
     assert r.status_code == 400
 
 
@@ -321,7 +329,7 @@ def test_rag_and_translation_jobs_are_saved(client, monkeypatch):
     assert _wait_job(client, j1)["status"] == "done" and _wait_job(client, j2)["status"] == "done"
 
     items = {e["mode"]: e for e in client.get("/api/history").json()["items"]}
-    assert items["rag"]["summary"] == "ответ, 1 источник" and items["rag"]["params"] == {"k": 7, "replay": None}
+    assert items["rag"]["summary"] == "ответ, 1 источник" and {k: v for k, v in items["rag"]["params"].items() if k != "book_ids"} == {"k": 7, "replay": None}
     assert items["translation"]["summary"] == "1 замечание" and items["translation"]["query"] == "147:2"
     rag = client.get(f"/api/history/{items['rag']['id']}").json()["result"]
     assert rag["answer"].startswith("Иисус") and rag["cited_ids"] == ["147.2.2"]

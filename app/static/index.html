@@ -7,22 +7,94 @@
 <link rel="stylesheet" href="style.css" />
 <script src="vendor/hyphenopoly/Hyphenopoly_Loader.js"></script>
 <script src="hyphenate.js"></script>
+<script src="richtext.js"></script>
 </head>
 <body>
 <header class="topbar">
   <h1>SmartSearch</h1>
   <nav class="tabs">
+    <div class="book-picker" id="book-picker">
+      <button id="books-btn" class="book-picker-btn" type="button" aria-haspopup="true" aria-expanded="false"
+              title="Книги, по которым идёт поиск">Книги: <b id="books-summary">…</b> ▾</button>
+      <button id="add-book-btn" class="icon-btn add-book-btn" type="button" title="Добавить книги (одну или несколько)" aria-label="Добавить книги">+</button>
+      <div id="books-menu" class="books-menu hidden" role="menu"></div>
+    </div>
     <button class="tab-btn active" data-tab="search">Поиск</button>
+    <a class="tab-btn" href="read.html" id="read-link" title="Читать книгу по документам">Чтение</a>
+    <span class="tabs-spacer"></span>
     <button class="tab-btn" data-tab="prepare">База данных</button>
     <button class="tab-btn" data-tab="settings">Настройки</button>
     <button class="tab-btn" data-tab="guide">Как это работает</button>
-    <a class="tab-btn" href="read.html" id="read-link" title="Читать книгу по документам">Чтение</a>
   </nav>
-  <label class="book-picker" title="Активная книга (папка library/&lt;книга&gt;)">Книга:
-    <select id="book-select"></select>
-  </label>
   <button id="theme-toggle" class="icon-btn" title="Тема">🌓</button>
 </header>
+
+<dialog id="add-book-dialog" class="add-book-dialog">
+  <form method="dialog" class="ab-form" id="ab-form">
+    <h2>Добавить книги <small class="ab-sub">— одну или сразу несколько</small></h2>
+
+    <div id="ab-step-file">
+      <label id="ab-drop" class="ab-drop" tabindex="0">
+        <input id="ab-file" type="file" accept=".epub,.fb2,.zip,.json,.md" multiple hidden />
+        <b>Перетащите файлы сюда</b> или нажмите, чтобы выбрать (можно несколько сразу)<br />
+        <small>Подходят книги .epub, .fb2, .fb2.zip (а также .json и .md в формате программы)</small>
+      </label>
+      <div id="ab-upload-msg" class="ab-msg"></div>
+    </div>
+
+    <div id="ab-step-form" class="hidden">
+      <div class="ab-fileline" id="ab-fileline"></div>
+      <label>Название <input id="ab-name" type="text" autocomplete="off" /></label>
+      <label>ID книги (латиницей — это имя папки)
+        <input id="ab-id" type="text" autocomplete="off" spellcheck="false" /></label>
+      <div class="ab-preview" id="ab-preview">Читаю книгу…</div>
+      <div class="ab-hint" id="ab-embed-hint"></div>
+    </div>
+
+    <div id="ab-step-batch" class="hidden">
+      <div class="ab-hint">Проверьте названия и ID. Книги будут проиндексированы по очереди.</div>
+      <div id="ab-batch-total" class="abb-total hidden">
+        <div class="abb-total-line"></div>
+        <div class="progress-bar-outer"><div class="progress-bar-inner abb-total-bar" style="width:0%"></div></div>
+      </div>
+      <div id="ab-batch-list" class="abb-list"></div>
+    </div>
+
+    <div id="ab-step-progress" class="hidden">
+      <div class="status-panel">
+        <div class="stages"></div>
+        <div class="progress-bar-outer"><div class="progress-bar-inner" style="width:0%"></div></div>
+        <div class="progress-line"><span class="spinner hidden">⏳</span><span class="msg"></span></div>
+        <div class="counters"></div>
+      </div>
+    </div>
+
+    <div id="ab-error" class="ab-msg error hidden"></div>
+    <div class="btn-row ab-buttons">
+      <button id="ab-start" type="button" class="hidden">Добавить и проиндексировать</button>
+      <button id="ab-start-all" type="button" class="hidden">Добавить и проиндексировать все</button>
+      <button id="ab-cancel-job" type="button" class="secondary hidden">Отменить индексацию</button>
+      <button id="ab-close" type="button" class="secondary">Отмена</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="book-info-dialog" class="add-book-dialog">
+  <form method="dialog" class="ab-form">
+    <h2>О книге</h2>
+    <label>Название <input id="bi-name" type="text" autocomplete="off" /></label>
+    <div class="bi-color-row">
+      <label class="bi-color-label">Цвет в результатах поиска <input id="bi-color" type="color" /></label>
+      <button id="bi-color-auto" type="button" class="secondary hidden" title="Вернуть цвет, который программа выбирает сама">Цвет по умолчанию</button>
+    </div>
+    <div id="bi-facts" class="bi-facts"></div>
+    <div id="bi-error" class="ab-msg error hidden"></div>
+    <div class="btn-row ab-buttons">
+      <button id="bi-save" type="button">Сохранить</button>
+      <button id="bi-close" type="button" class="secondary">Закрыть</button>
+    </div>
+  </form>
+</dialog>
 
 <div id="db-banner" class="banner-error hidden"></div>
 <main>
@@ -47,7 +119,6 @@
         </select>
       </div>
       <button id="query-btn">Найти</button>
-      <button id="history-btn" type="button" class="secondary" title="Прошлые запросы и сохранённые результаты">История</button>
       <span id="llm-badge" class="llm-badge hidden"></span>
     </div>
 
@@ -470,6 +541,8 @@
   </section>
 </main>
 
+<button id="history-rail" type="button" class="history-rail" title="История: прошлые запросы и сохранённые результаты"
+        aria-controls="history-panel" aria-expanded="false"><span class="rail-icon">🕘</span><span class="rail-text">История</span></button>
 <aside id="history-panel" class="history-panel hidden" aria-label="История запросов">
   <div class="history-head">
     <strong>История</strong>

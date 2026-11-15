@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import zlib
 from pathlib import Path
 from typing import Optional
 
@@ -31,7 +32,8 @@ CREATE TABLE IF NOT EXISTS paragraphs (
     ru TEXT,
     ru_lemma TEXT,
     en_lemma TEXT,
-    chunk_id TEXT
+    chunk_id TEXT,
+    fmt BLOB
 );
 
 CREATE INDEX IF NOT EXISTS idx_paragraphs_book_seq ON paragraphs(book_id, seq);
@@ -97,6 +99,31 @@ CREATE VIRTUAL TABLE {name} USING fts5(
     tokenize = 'unicode61 remove_diacritics 2'
 )
 """
+
+
+def encode_fmt(markup: Optional[str]) -> Optional[bytes]:
+    """Display markup of a paragraph -> BLOB: b'z' + zlib(level 9) when that is smaller, else
+    b'u' + raw UTF-8. None (no formatting) stays NULL."""
+    if not markup:
+        return None
+    raw = markup.encode("utf-8")
+    packed = zlib.compress(raw, 9)
+    return b"z" + packed if len(packed) < len(raw) else b"u" + raw
+
+
+def decode_fmt(blob) -> Optional[str]:
+    """Inverse of encode_fmt; None for NULL or an unreadable value (the plain text is shown then)."""
+    if not blob:
+        return None
+    blob = bytes(blob)
+    try:
+        if blob[:1] == b"z":
+            return zlib.decompress(blob[1:]).decode("utf-8")
+        if blob[:1] == b"u":
+            return blob[1:].decode("utf-8")
+    except (zlib.error, UnicodeDecodeError):
+        pass
+    return None
 
 
 def fts_columns(conn: sqlite3.Connection) -> list[str]:
@@ -171,6 +198,11 @@ def _row_to_para(row: sqlite3.Row) -> dict:
         "en": row["en"],
         "ru": row["ru"],
     }
+    # display markup (<i> <b> <sup> <sub> <br>) of the text the book is written in; absent in old databases
+    html = decode_fmt(row["fmt"]) if "fmt" in keys else None
+    out["ru_html"] = out["en_html"] = None
+    if html:
+        out["ru_html" if (out["ru"] or "").strip() else "en_html"] = html
     if "paper_title_en" in keys and (row["paper_title_en"] is not None or row["paper_title_ru"] is not None):
         out["paper_title"] = {"en": row["paper_title_en"], "ru": row["paper_title_ru"]}
     if "section_title_en" in keys and (row["section_title_en"] is not None or row["section_title_ru"] is not None):

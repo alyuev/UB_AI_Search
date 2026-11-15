@@ -14,7 +14,7 @@ import threading
 import time
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import StreamingResponse
 import mimetypes
 
@@ -31,6 +31,8 @@ from app.core import db as core_db
 from app.core import embedder as core_embedder
 from app.core import indexer as core_indexer
 from app.core import terms as core_terms
+from app.core import multi as core_multi
+from app.core import parser as core_parser
 from app.core.search import Searcher
 from app import history as hist
 from app import options as opts_mod
@@ -70,6 +72,11 @@ class AppState:
         self.embedder_error: Optional[str] = None
         self.searcher = None
         self.lock = threading.Lock()
+        # Other opened books for multi-book search (the ACTIVE book lives in conn/searcher above):
+        # book_id -> BookHandle, opened lazily. Embedders of other models are kept per (model, runtime).
+        self.handles: dict[str, "BookHandle"] = {}
+        self.extra_embedders: dict[tuple, object] = {}
+        self.handles_lock = threading.RLock()
 
     def book_db_path(self, book_id: str) -> str:
         return os.path.join(config.LIBRARY_DIR, book_id, "book.db")
@@ -123,6 +130,7 @@ class AppState:
         with self.lock:
             self._close_searcher()
             self._rebuild_searcher()
+        self.drop_handles()   # the other books pick up the new FTS settings when opened again
 
     def release_for_reindex(self):
         """Close the DB connection (and the searcher that holds its own writable
@@ -182,6 +190,65 @@ class AppState:
             logger.warning("searcher init failed, FTS-only fallback: %s", exc)
             self.searcher = None
 
+    # ---- other books (multi-book search) ----
+    def embedder_for(self, model_name: Optional[str], runtime: Optional[str]):
+        """(embedder, problem) for a book built with this model/runtime: the active embedder when it is the
+        same one (the query vector is then computed once for all such books), else one cached per pair."""
+        runtime = runtime or "auto"
+        if not model_name:
+            return None, "в базе не записана модель эмбеддингов"
+        key = (model_name, runtime)
+        if self.embedder is not None and self.embedder_key == key:
+            return self.embedder, None
+        if key in self.extra_embedders:
+            return self.extra_embedders[key], None
+        try:
+            emb = core_embedder.create_embedder(model_name, runtime=runtime,
+                                                device=config.load_settings().get("device", "auto"))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("embedder for %s/%s unavailable: %s", model_name, runtime, exc)
+            return None, f"модель {model_name} недоступна: {exc}"
+        self.extra_embedders[key] = emb
+        return emb, None
+
+    def handle(self, book_id: str) -> "BookHandle":
+        """Opened book (connection + searcher + info) for any book in the library; KeyError if it has no database."""
+        with self.handles_lock:
+            if book_id == self.book_id and self.conn is not None:
+                info = core_db.get_book_info(self.conn, book_id) or {}
+                return BookHandle(book_id, info.get("book_name") or book_id, self.conn, self.searcher, info,
+                                  None if self.searcher is not None else self.embedder_error)
+            h = self.handles.get(book_id)
+            if h is not None:
+                return h
+            path = self.book_db_path(book_id)
+            if not os.path.exists(path):
+                raise KeyError(book_id)
+            conn = core_db.open_db(path, readonly=True)
+            info = core_db.get_book_info(conn, book_id) or core_db.get_book_info(conn) or {}
+            emb, problem = self.embedder_for(info.get("embedding_model"), info.get("embedding_runtime"))
+            searcher = None
+            try:
+                searcher = Searcher(path, emb)
+            except Exception as exc:  # noqa: BLE001
+                problem = problem or f"поисковый индекс не открылся: {exc}"
+            h = BookHandle(book_id, info.get("book_name") or book_id, conn, searcher, info, problem)
+            self.handles[book_id] = h
+            return h
+
+    def drop_handle(self, book_id: str) -> None:
+        """Forget a cached non-active book (it is being re-indexed or deleted) and release its files."""
+        with self.handles_lock:
+            h = self.handles.pop(book_id, None)
+        if h is not None:
+            h.close()
+
+    def drop_handles(self) -> None:
+        with self.handles_lock:
+            hs, self.handles = list(self.handles.values()), {}
+        for h in hs:
+            h.close()
+
     def reload_searcher(self):
         if self.book_id:
             self.load_book(self.book_id)
@@ -190,6 +257,14 @@ class AppState:
         """Close everything on app shutdown -- in particular, terminate a
         LlamaCppEmbedder's llama-server subprocess rather than leaving it running."""
         self._close_conn()
+        self.drop_handles()
+        for emb in list(self.extra_embedders.values()):
+            if hasattr(emb, "close"):
+                try:
+                    emb.close()
+                except Exception:  # noqa: BLE001
+                    pass
+        self.extra_embedders = {}
         if self.embedder is not None and hasattr(self.embedder, "close"):
             try:
                 self.embedder.close()
@@ -198,6 +273,28 @@ class AppState:
         self.embedder = None
         self.embedder_key = None
         self.searcher = None
+
+
+class BookHandle:
+    """One opened book: read-only connection, searcher (None = no index) and its `books` row."""
+
+    def __init__(self, book_id, book_name, conn, searcher, info, problem=None):
+        self.book_id, self.book_name, self.conn, self.searcher = book_id, book_name, conn, searcher
+        self.info, self.problem = info or {}, problem
+        self.model = self.info.get("embedding_model")
+        self.owned = True
+
+    @property
+    def mono(self) -> bool:
+        return not (self.info.get("language_translation") or "")
+
+    def close(self):
+        for c in (self.searcher.conn if self.searcher is not None else None, self.conn):
+            try:
+                if c is not None:
+                    c.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 state = AppState()
@@ -371,86 +468,162 @@ def _search_experiment(q: str, mode: str, k: int, lang, timings: dict) -> dict:
     }
 
 
-@app.get("/api/search")
-def api_search(q: str = Query(...), mode: str = Query("hybrid"), k: int = Query(10),
-               lang: Optional[str] = Query(None), history: int = Query(1)):
+def _library_ids() -> list[str]:
+    root = str(config.LIBRARY_DIR)
+    if not os.path.isdir(root):
+        return []
+    return [n for n in sorted(os.listdir(root)) if os.path.exists(os.path.join(root, n, "book.db"))]
+
+
+def _parse_ids(book_ids) -> Optional[list[str]]:
+    if book_ids is None or not isinstance(book_ids, (str, list, tuple)):
+        return None
+    if isinstance(book_ids, str):
+        book_ids = book_ids.split(",")
+    return [b.strip() for b in book_ids if isinstance(b, str) and b.strip()]
+
+
+def _resolve_books(book_ids=None) -> list[str]:
+    """Books to search: the explicit list (unknown id -> 400), else the saved selection («search_books»;
+    books that vanished are dropped), else just the active book."""
+    lib = _library_ids()
+    explicit = _parse_ids(book_ids)
+    if explicit:
+        bad = [b for b in explicit if b not in lib]
+        if bad:
+            raise HTTPException(400, f"Книга не найдена в библиотеке: {', '.join(bad)}")
+        return list(dict.fromkeys(explicit))
+    settings = config.load_settings()
+    saved = [b for b in (settings.get("search_books") or []) if b in lib]
+    if saved:
+        return list(dict.fromkeys(saved))
+    active = state.book_id or settings.get("active_book")
+    return [active] if active else lib[:1]
+
+
+def _handle_or_error(book_id: str) -> BookHandle:
+    try:
+        return state.handle(book_id)
+    except KeyError:
+        raise HTTPException(404, f"База книги не найдена: {book_id}")
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(503, f"Ошибка открытия базы «{book_id}»: {exc}")
+
+
+def _conn_for(book_id: Optional[str] = None):
+    """Read connection of the given book; without an id - of the active one (the reading page, TOC, DB tab)."""
+    if book_id and book_id != state.book_id:
+        return _handle_or_error(book_id).conn
     if state.conn is None:
         raise HTTPException(503, state.db_error or "База не загружена")
-    if state.searcher is None:
-        raise HTTPException(503, "Поисковый индекс недоступен")
-    fn = {"hybrid": state.searcher.hybrid, "fts": state.searcher.fts,
-          "semantic": state.searcher.semantic}.get(mode)
-    if fn is None:
+    return state.conn
+
+
+def _searcher_for(book_id: Optional[str] = None):
+    if book_id and book_id != state.book_id:
+        return _handle_or_error(book_id).searcher
+    return state.searcher
+
+
+def _book_tag(items: list[dict], book_id: str, book_name: str) -> list[dict]:
+    for it in items:
+        it["book_id"], it["book_name"] = book_id, book_name
+    return items
+
+
+@app.get("/api/search")
+def api_search(q: str = Query(...), mode: str = Query("hybrid"), k: int = Query(10),
+               lang: Optional[str] = Query(None), history: int = Query(1),
+               book_ids: Optional[str] = None):
+    """`book_ids`: comma-separated books to search (default: the saved selection). Several books ->
+    every book is searched and the hits are merged by normalised score (see app/core/multi.py)."""
+    if mode not in ("hybrid", "fts", "semantic"):
         raise HTTPException(400, f"Неизвестный режим поиска: {mode}")
+    ids = _resolve_books(book_ids)
     t0 = time.monotonic()
-    try:
-        results = fn(q, k)
-    except Exception as exc:  # noqa: BLE001
-        raise HTTPException(500, f"Ошибка поиска: {exc}")
-    timings = getattr(state.searcher, "last_timings", {})
+    warnings: list[dict] = []
+    if ids == [state.book_id]:
+        if state.conn is None:
+            raise HTTPException(503, state.db_error or "База не загружена")
+        if state.searcher is None:
+            raise HTTPException(503, "Поисковый индекс недоступен")
+        fn = {"hybrid": state.searcher.hybrid, "fts": state.searcher.fts, "semantic": state.searcher.semantic}[mode]
+        try:
+            results = fn(q, k)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(500, f"Ошибка поиска: {exc}")
+        timings = getattr(state.searcher, "last_timings", {})
+        name = (core_db.get_book_info(state.conn, state.book_id) or {}).get("book_name") or state.book_id
+        _book_tag(results, state.book_id, name)
+    else:
+        handles = []
+        for b in ids:
+            try:
+                handles.append(state.handle(b))
+            except Exception as exc:  # noqa: BLE001
+                warnings.append({"book_id": b, "message": f"книга не открылась: {exc}"})
+        if not any(h.searcher is not None for h in handles):
+            raise HTTPException(503, "Поисковый индекс выбранных книг недоступен")
+        try:
+            results, timings, w = core_multi.search_books(handles, q, mode, k)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(500, f"Ошибка поиска: {exc}")
+        warnings += w
     if history:
         n = len(results)
-        _record_history("search", q, {"mode": mode, "k": k, "lang": lang},
+        _record_history("search", q, {"mode": mode, "k": k, "lang": lang, "book_ids": ids},
                         {"results": _compact(results), "timings": timings},
                         f"{n} {_plural(n, 'результат', 'результата', 'результатов')}" if n else "ничего не найдено",
-                        time.monotonic() - t0, experiment=_search_experiment(q, mode, k, lang, timings))
-    return {"results": results, "timings": timings}
+                        time.monotonic() - t0, experiment=_search_experiment(q, mode, k, lang, timings),
+                        book_id=ids[0] if ids else None)
+    return {"results": results, "timings": timings, "book_ids": ids, "warnings": warnings}
 
 
 @app.get("/api/paragraph/{para_id}")
-def api_paragraph(para_id: str):
-    if state.conn is None:
-        raise HTTPException(503, state.db_error or "База не загружена")
-    p = core_db.get_paragraph(state.conn, para_id)
+def api_paragraph(para_id: str, book_id: Optional[str] = None):
+    p = core_db.get_paragraph(_conn_for(book_id), para_id)
     if not p:
         raise HTTPException(404, "Абзац не найден")
     return p
 
 
 @app.get("/api/paragraph/{para_id}/context")
-def api_paragraph_context(para_id: str, before: int = 2, after: int = 2):
-    if state.conn is None:
-        raise HTTPException(503, state.db_error or "База не загружена")
-    ctx = core_db.get_context(state.conn, para_id, before, after)
+def api_paragraph_context(para_id: str, before: int = 2, after: int = 2, book_id: Optional[str] = None):
+    ctx = core_db.get_context(_conn_for(book_id), para_id, before, after)
     if not ctx:
         raise HTTPException(404, "Абзац не найден")
     return {"context": ctx}
 
 
 @app.get("/api/toc")
-def api_toc():
-    """Table of contents of the active book (parts > papers > sections, titles in both languages)."""
-    if state.conn is None:
-        raise HTTPException(503, state.db_error or "База не загружена")
-    return {"parts": core_db.get_toc(state.conn)}
+def api_toc(book_id: Optional[str] = None):
+    """Table of contents of the active book (or `book_id`): parts > papers > sections, titles in both languages."""
+    return {"parts": core_db.get_toc(_conn_for(book_id))}
 
 
 @app.get("/api/read/{paper}")
-def api_read(paper: int, q: str = ""):
+def api_read(paper: int, q: str = "", book_id: Optional[str] = None):
     """The whole text of one paper for the reading page. With `q`, also the words to highlight
     for that search query in both languages (`marks`); without it nothing is highlighted."""
-    if state.conn is None:
-        raise HTTPException(503, state.db_error or "База не загружена")
-    data = core_db.get_paper_text(state.conn, paper)
+    data = core_db.get_paper_text(_conn_for(book_id), paper)
     if not data:
         raise HTTPException(404, "Документ не найден")
     data["marks"] = {"ru": [], "en": []}
-    if q.strip() and state.searcher is not None:
+    sr = _searcher_for(book_id)
+    if q.strip() and sr is not None:
         paras = data["paragraphs"]
-        data["marks"] = state.searcher.terms.query_marks(q, [p["ru"] for p in paras], [p["en"] for p in paras])
+        data["marks"] = sr.terms.query_marks(q, [p["ru"] for p in paras], [p["en"] for p in paras])
     return data
 
 
 @app.get("/api/paragraph/{para_id}/pairs")
-def api_paragraph_pairs(para_id: str):
+def api_paragraph_pairs(para_id: str, book_id: Optional[str] = None):
     """RU<->EN glossary pairs present in this paragraph, for the hover highlight in the result cards.
     Empty list (not an error) when the glossary has not been built."""
-    if state.conn is None:
-        raise HTTPException(503, state.db_error or "База не загружена")
-    p = core_db.get_paragraph(state.conn, para_id)
+    p = core_db.get_paragraph(_conn_for(book_id), para_id)
     if not p:
         raise HTTPException(404, "Абзац не найден")
-    sr = state.searcher
+    sr = _searcher_for(book_id)
     if sr is None:
         return {"pairs": [], "glossary": False}
     tt = sr.terms
@@ -492,6 +665,8 @@ def api_job_index(req: IndexJobRequest):
     json_path = req.json_path if os.path.isabs(req.json_path) else os.path.join(str(config.ROOT), req.json_path)
     if not os.path.isfile(json_path):
         raise HTTPException(400, f"Исходный файл не найден: {json_path}")
+    if not _is_book_file(json_path):
+        raise HTTPException(400, "Формат файла не поддерживается. Нужны: " + ", ".join(core_parser.BOOK_EXTENSIONS))
     if not re.fullmatch(r"[A-Za-z0-9_.-]+", req.book_id or ""):
         raise HTTPException(400, "ID книги: только латинские буквы, цифры, «_», «-» и «.»")
 
@@ -507,6 +682,7 @@ def api_job_index(req: IndexJobRequest):
         is_active = req.book_id == (config.load_settings().get("active_book") or state.book_id)
         if is_active:
             state.release_for_reindex()
+        state.drop_handle(req.book_id)   # a cached (non-active) copy would hold book.db open
         try:
             built_path = core_indexer.build_index(
                 json_path, db_path, req.model_name, scheme=req.scheme,
@@ -619,6 +795,7 @@ class RagJobRequest(BaseModel):
     k: Optional[int] = None          # None -> the «сколько абзацев передавать» setting
     replay: Optional[int] = None     # history entry id: re-run with EXACTLY the saved prompts/parameters
     overview: Optional[bool] = None  # True - «Обзор по всей книге»; None - the program decides
+    book_ids: Optional[list[str]] = None   # books selected for search; the question is answered over ONE of them
 
 
 def _replay_setup(settings: dict, replay_id: int, mode: str) -> tuple[dict, "prompts_mod.ResolvedPrompts", str]:
@@ -675,8 +852,15 @@ def _search_meta(settings: dict, reasoning_key: str) -> dict:
 
 @app.post("/api/jobs/rag")
 def api_job_rag(req: RagJobRequest):
-    if state.searcher is None:
+    # A question is answered over ONE book: paragraph ids («1:0.1») repeat between books, so citations
+    # would be ambiguous. With several books selected the active one is used if it is among them.
+    ids = _resolve_books(req.book_ids)
+    rag_book = state.book_id if state.book_id in ids else ids[0]
+    rag_handle = _handle_or_error(rag_book)
+    if rag_handle.searcher is None:
         raise HTTPException(503, "Поисковый индекс недоступен")
+    multi_note = (f"Выбрано книг: {len(ids)}. Вопрос к тексту отвечает по одной книге — «{rag_handle.book_name}»; "
+                  "поиск по нескольким книгам доступен в режиме «Обычный поиск».") if len(ids) > 1 else None
     settings = config.load_settings()
     prompts = prompts_mod.from_settings(settings)
     replay_note = None
@@ -711,7 +895,9 @@ def api_job_rag(req: RagJobRequest):
         if replay_note:
             job.add_log(replay_note)
         options = opts_mod.effective(settings)
-        searcher = state.searcher
+        searcher = rag_handle.searcher
+        if multi_note:
+            job.add_log(multi_note)
         if req.replay is not None and hasattr(searcher, "with_overrides"):
             # exact replay: the FTS weights/modes/stop words of the ORIGINAL run, for this run only
             searcher = searcher.with_overrides(
@@ -724,7 +910,7 @@ def api_job_rag(req: RagJobRequest):
             timeout=ep["timeout"], rewrite_llm=rw_client, rewrite_model=rw_model,
             max_context_length=resolved["context"] or 8192,
             reasoning_effort=resolve_reasoning_effort(options["reasoning_rag"], auto_default="none"),
-            options=options, prompts=prompts, conn=state.conn,
+            options=options, prompts=prompts, conn=rag_handle.conn,
             meta=_search_meta(settings, "reasoning_rag"),
         )
         t_start = time.monotonic()
@@ -743,17 +929,17 @@ def api_job_rag(req: RagJobRequest):
             raise RuntimeError(result["error"])
         n_cited = len(result.get("cited_ids") or [])
         _record_history(
-            "rag", req.question, {"k": k_eff, "replay": req.replay, **_cloud_params(result),
+            "rag", req.question, {"k": k_eff, "replay": req.replay, "book_ids": ids, **_cloud_params(result),
                                   **({"overview": True} if result.get("overview") else {})},
             {**{k: result.get(k) for k in ("answer", "cited_ids", "unknown_citations", "no_answer", "has_inference",
                                           "plan", "candidates", "stats_summary", "model_note", "prompt_warnings",
                                           "warnings", "provider", "truncated", "error", "answered_model",
                                           "fallback_note", "overview", "followup")},
-             "sources": _compact(result.get("sources") or [])},
+             "sources": _compact(_book_tag(list(result.get("sources") or []), rag_book, rag_handle.book_name))},
             "ответ оборван на середине" if partial else
             "в книге нет данных для ответа" if result.get("no_answer")
             else f"ответ, {n_cited} {_plural(n_cited, 'источник', 'источника', 'источников')}",
-            time.monotonic() - t_start, experiment=result.get("experiment"))
+            time.monotonic() - t_start, experiment=result.get("experiment"), book_id=rag_book)
         if partial:   # the job is an error (the reason is shown), the partial answer stays in job.result
             raise RuntimeError(result["error"])
 
@@ -1327,15 +1513,15 @@ def _history_book() -> Optional[str]:
 
 
 def _record_history(mode: str, query: str, params: dict, result: dict, summary: str, duration_s: float,
-                    experiment: Optional[dict] = None):
+                    experiment: Optional[dict] = None, book_id: Optional[str] = None):
     """Saving history must never break a search/job: any problem is only logged."""
     try:
-        hist.add(_history_book(), mode, query, params, result, summary, duration_s, experiment=experiment)
+        hist.add(book_id or _history_book(), mode, query, params, result, summary, duration_s, experiment=experiment)
     except Exception:  # noqa: BLE001
         logger.warning("could not save history entry", exc_info=True)
 
 
-_PARA_KEEP = ("id", "score", "fts_rank", "sem_rank", "match_lang", "snippet_en", "snippet_ru")
+_PARA_KEEP = ("id", "score", "fts_rank", "sem_rank", "match_lang", "snippet_en", "snippet_ru", "book_id", "book_name")
 
 
 def _compact(items: list[dict]) -> list[dict]:
@@ -1343,14 +1529,25 @@ def _compact(items: list[dict]) -> list[dict]:
     return [{k: it.get(k) for k in _PARA_KEEP if it.get(k) is not None} for it in items]
 
 
-def _hydrate(items: list[dict]) -> tuple[list[dict], int]:
+def _conn_quiet(book_id: Optional[str]):
+    """Connection of a book for redrawing history, None when it cannot be opened (never raises)."""
+    if not book_id or book_id == state.book_id:
+        return state.conn
+    try:
+        return state.handle(book_id).conn
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _hydrate(items: list[dict], default_book: Optional[str] = None) -> tuple[list[dict], int]:
     out, missing = [], 0
     for it in items:
-        p = core_db.get_paragraph(state.conn, it["id"]) if state.conn is not None else None
+        conn = _conn_quiet(it.get("book_id") or default_book)
+        p = core_db.get_paragraph(conn, it["id"]) if conn is not None else None
         if p is None:
             missing += 1
             p = {"id": it["id"], "paper": None, "section": None, "paragraph": None, "en": "", "ru": ""}
-        out.append({**p, **it})
+        out.append({"book_id": it.get("book_id") or default_book, **p, **it})
     return out, missing
 
 
@@ -1381,12 +1578,13 @@ def api_history_get(entry_id: int):
 def _entry_for_view(e: dict) -> dict:
     res = e.get("result") or {}
     missing = 0
-    e["book_loaded"] = e["book_id"] == state.book_id and state.conn is not None
+    used = (e.get("params") or {}).get("book_ids") or [e["book_id"]]
+    e["book_loaded"] = all(_conn_quiet(b) is not None for b in used)
     if e["mode"] == "search":
-        items, missing = _hydrate(res.get("results", []))
+        items, missing = _hydrate(res.get("results", []), e["book_id"])
         e["result"] = {"results": items, "timings": res.get("timings", {})}
     elif e["mode"] == "rag":
-        items, missing = _hydrate(res.get("sources", []))
+        items, missing = _hydrate(res.get("sources", []), e["book_id"])
         e["result"] = {**res, "sources": items, "error": None}
     e["missing_paragraphs"] = missing
     return e
@@ -1598,15 +1796,44 @@ def api_history_rating(entry_id: int, req: RatingRequest):
 
 # ------------------------------------------------------------- library -----
 
+_BOOK_ROW_CACHE: dict[str, tuple[float, dict]] = {}
+
+
+def _book_row(book_id: str) -> dict:
+    """book_id + what the `books` table says about it (name, language, size); cached by file time."""
+    path = state.book_db_path(book_id)
+    row = {"book_id": book_id, "book_name": book_id, "language": None, "bilingual": False, "paragraphs": None,
+           "embedding_model": None}
+    try:
+        mt = os.path.getmtime(path)
+        cached = _BOOK_ROW_CACHE.get(book_id)
+        if cached and cached[0] == mt:
+            return dict(cached[1])
+        conn = core_db.open_db(path, readonly=True)
+        try:
+            info = core_db.get_book_info(conn, book_id) or core_db.get_book_info(conn) or {}
+            n = conn.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0]
+        finally:
+            conn.close()
+        mono = not (info.get("language_translation") or "")
+        row.update({"book_name": info.get("book_name") or book_id, "language": info.get("language_source") or None,
+                    "bilingual": not mono, "paragraphs": n, "embedding_model": info.get("embedding_model"),
+                    "embedding_runtime": info.get("embedding_runtime"), "index_scheme": info.get("index_scheme"),
+                    "vector_dtype": info.get("vector_dtype")})
+        _BOOK_ROW_CACHE[book_id] = (mt, dict(row))
+    except Exception as exc:  # noqa: BLE001
+        row["error"] = str(exc)
+    return row
+
+
 @app.get("/api/books")
 def api_books():
-    books = []
-    if os.path.isdir(config.LIBRARY_DIR):
-        for name in sorted(os.listdir(config.LIBRARY_DIR)):
-            db_path = os.path.join(config.LIBRARY_DIR, name, "book.db")
-            if os.path.exists(db_path):
-                books.append({"book_id": name, "active": name == state.book_id})
-    return {"books": books}
+    ids = _library_ids()
+    selected = _resolve_books(None) if ids else []
+    colors = config.load_settings().get("book_colors") or {}
+    books = [{**_book_row(b), "active": b == state.book_id, "selected": b in selected, "color": colors.get(b)}
+             for b in ids]
+    return {"books": books, "search_books": selected, "active_book": state.book_id}
 
 
 class BookSelectRequest(BaseModel):
@@ -1622,14 +1849,321 @@ def api_books_select(req: BookSelectRequest):
     return {"ok": True, "db_error": state.db_error}
 
 
+def _book_or_404(book_id: str) -> None:
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", book_id) or book_id not in _library_ids():
+        raise HTTPException(404, "Книга не найдена")
+
+
+@app.get("/api/books/{book_id}/info")
+def api_book_info(book_id: str):
+    """Everything known about one book for the «О книге» window: name, source file, author, language,
+    size, structure, how and when it was indexed, its colour."""
+    _book_or_404(book_id)
+    path = state.book_db_path(book_id)
+    conn = core_db.open_db(path, readonly=True)
+    try:
+        info = core_db.get_book_info(conn, book_id) or core_db.get_book_info(conn) or {}
+        n_par = conn.execute("SELECT COUNT(*) FROM paragraphs").fetchone()[0]
+        n_ch = conn.execute("SELECT COUNT(DISTINCT paper) FROM paragraphs").fetchone()[0]
+    finally:
+        conn.close()
+    src = info.get("source_file") or ""
+    src_abs = src if (not src or os.path.isabs(src)) else os.path.join(str(config.ROOT), src)
+    src_exists = bool(src_abs) and os.path.isfile(src_abs)
+    meta = {}
+    if src_exists:
+        try:
+            meta = core_parser.read_book_meta(src_abs) or {}
+        except Exception:  # noqa: BLE001  (old json/md sources have no metadata)
+            meta = {}
+    def _short(p):  # relative to the program folder when inside it, otherwise as is
+        try:
+            r = os.path.relpath(p, str(config.ROOT))
+            return p if r.startswith("..") else r
+        except ValueError:  # another drive
+            return p
+    rel = _short(src_abs) if src_abs else ""
+    colors = config.load_settings().get("book_colors") or {}
+    return {
+        "book_id": book_id, "book_name": info.get("book_name") or book_id,
+        "author": meta.get("author") or "", "title_in_file": meta.get("title") or "",
+        "source_file": rel, "source_exists": src_exists,
+        "source_size_bytes": os.path.getsize(src_abs) if src_exists else None,
+        "language": info.get("language_source"), "translation": info.get("language_translation") or "",
+        "paragraphs": n_par, "chapters": n_ch,
+        "db_path": _short(path), "db_size_bytes": os.path.getsize(path),
+        "created_at": info.get("created_at"), "embedding_model": info.get("embedding_model"),
+        "embedding_runtime": info.get("embedding_runtime"), "index_scheme": info.get("index_scheme"),
+        "vector_dtype": info.get("vector_dtype"), "color": colors.get(book_id),
+        "active": book_id == state.book_id,
+    }
+
+
+class BookEditRequest(BaseModel):
+    book_name: Optional[str] = None
+    color: Optional[str] = None   # "#rrggbb"; "" = back to the automatic colour
+
+
+@app.patch("/api/books/{book_id}")
+def api_book_edit(book_id: str, req: BookEditRequest):
+    """Rename a book (stored in its book.db) and/or set its colour (stored in settings)."""
+    _book_or_404(book_id)
+    if req.book_name is not None:
+        name = req.book_name.strip()
+        if not name:
+            raise HTTPException(400, "Название не может быть пустым")
+        import sqlite3
+        c = sqlite3.connect(state.book_db_path(book_id), timeout=10)
+        try:
+            c.execute("UPDATE books SET book_name = ?", (name[:300],))
+            c.commit()
+        finally:
+            c.close()
+        _BOOK_ROW_CACHE.pop(book_id, None)
+        if book_id != state.book_id:
+            state.drop_handle(book_id)   # the cached handle carries the old name
+    if req.color is not None:
+        col = req.color.strip()
+        if col and not re.fullmatch(r"#[0-9a-fA-F]{6}", col):
+            raise HTTPException(400, "Цвет должен быть в виде #rrggbb")
+        settings = config.load_settings()
+        colors = dict(settings.get("book_colors") or {})
+        if col:
+            colors[book_id] = col.lower()
+        else:
+            colors.pop(book_id, None)
+        settings["book_colors"] = colors
+        config.save_settings(settings)
+    return api_book_info(book_id)
+
+
+class SearchBooksRequest(BaseModel):
+    book_ids: list[str]
+
+
+@app.post("/api/books/search-selection")
+def api_books_search_selection(req: SearchBooksRequest):
+    """Remember which books the search covers («все» = every library book)."""
+    lib = _library_ids()
+    ids = [b for b in dict.fromkeys(req.book_ids) if b in lib]
+    if not ids:
+        raise HTTPException(400, "Выберите хотя бы одну книгу")
+    settings = config.load_settings()
+    settings["search_books"] = ids
+    config.save_settings(settings)
+    return {"ok": True, "search_books": ids}
+
+
+def _is_book_file(path: str) -> bool:
+    return str(path).lower().endswith(tuple(core_parser.BOOK_EXTENSIONS))
+
+
+_TRANSLIT = dict(zip("абвгдежзийклмнопрстуфхцчшщыэюя",
+                     ["a", "b", "v", "g", "d", "e", "zh", "z", "i", "y", "k", "l", "m", "n", "o", "p", "r", "s", "t",
+                      "u", "f", "h", "ts", "ch", "sh", "sch", "y", "e", "yu", "ya"]))
+
+
+def suggest_book_id(*texts: Optional[str]) -> str:
+    """A latin slug for the library folder from the first non-empty text (title, file name...), unique among the books."""
+    base = ""
+    for t in texts:
+        t = (t or "").lower().replace("ё", "е")
+        base = re.sub(r"[^a-z0-9]+", "_", "".join(_TRANSLIT.get(c, "" if c in "ьъ" else c) for c in t)).strip("_")[:40].strip("_")
+        if base:
+            break
+    base = base or "book"
+    taken = set(_library_ids())
+    cand, n = base, 2
+    while cand in taken:
+        cand, n = f"{base}_{n}", n + 1
+    return cand
+
+
+def _safe_filename(name: str) -> str:
+    base = os.path.basename((name or "").replace("\\", "/")).strip()
+    return re.sub(r"[^\w.\- ()]", "_", base, flags=re.UNICODE).strip(". ")
+
+
+MAX_UPLOAD_BYTES = 300 * 1024 * 1024
+
+
+_FILE_HASH_CACHE: dict = {}   # path -> (mtime, size, sha256)
+
+
+def _file_sha256(path: str) -> Optional[str]:
+    import hashlib
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    c = _FILE_HASH_CACHE.get(path)
+    if c and c[0] == st.st_mtime and c[1] == st.st_size:
+        return c[2]
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    _FILE_HASH_CACHE[path] = (st.st_mtime, st.st_size, h.hexdigest())
+    return h.hexdigest()
+
+
+def _norm_title(s: Optional[str]) -> str:
+    return re.sub(r"[\W_]+", " ", (s or "").lower().replace("ё", "е")).strip()
+
+
+def _find_duplicate_book(body: bytes, filename: str) -> Optional[dict]:
+    """Is this book already in the library? Same file content as a book's source, or the same title.
+    Returns {book_id, book_name, reason} or None."""
+    import hashlib
+    import tempfile
+    digest = hashlib.sha256(body).hexdigest()
+    title = ""
+    try:  # the title the new file declares (parsed from a temp copy; metadata only)
+        suffix = ".fb2.zip" if filename.lower().endswith(".fb2.zip") else os.path.splitext(filename)[1]
+        fd, tmp = tempfile.mkstemp(suffix=suffix)
+        with os.fdopen(fd, "wb") as f:
+            f.write(body)
+        try:
+            title = (core_parser.read_book_meta(tmp) or {}).get("title") or ""
+        finally:
+            os.remove(tmp)
+    except Exception:  # noqa: BLE001  (unreadable file: the normal upload path reports it)
+        pass
+    want = _norm_title(title)
+    for b in _library_ids():
+        path = state.book_db_path(b)
+        try:
+            conn = core_db.open_db(path, readonly=True)
+            try:
+                info = core_db.get_book_info(conn, b) or core_db.get_book_info(conn) or {}
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001
+            continue
+        name = info.get("book_name") or b
+        src = info.get("source_file") or ""
+        src_abs = src if (not src or os.path.isabs(src)) else os.path.join(str(config.ROOT), src)
+        if src_abs and os.path.isfile(src_abs) and _file_sha256(src_abs) == digest:
+            return {"book_id": b, "book_name": name, "reason": "тот же файл"}
+        if want and want == _norm_title(name):
+            return {"book_id": b, "book_name": name, "reason": "то же название"}
+        if want and src_abs and os.path.isfile(src_abs):
+            try:
+                if want == _norm_title((core_parser.read_book_meta(src_abs) or {}).get("title")):
+                    return {"book_id": b, "book_name": name, "reason": "то же название"}
+            except Exception:  # noqa: BLE001
+                pass
+    return None
+
+
+@app.post("/api/books/upload")
+async def api_books_upload(request: Request, filename: str = Query(...), force: bool = False):
+    """Receive a book file (raw request body; the name in `?filename=`), keep it in corpus/ and report what the file
+    says about itself, with a suggested book id. Nothing is indexed here."""
+    name = _safe_filename(filename)
+    if not name or not _is_book_file(name):
+        raise HTTPException(400, "Формат файла не поддерживается. Нужны: " + ", ".join(core_parser.BOOK_EXTENSIONS))
+    body = await request.body()
+    if not body:
+        raise HTTPException(400, "Файл пустой")
+    if len(body) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Файл слишком большой (больше 300 МБ)")
+    dup = None if force else _find_duplicate_book(body, name)
+    if dup:
+        # already in the library: nothing is saved, the caller shows a note and moves on
+        return {"duplicate_of": dup, "file": None, "title": dup["book_name"], "size_bytes": len(body)}
+    os.makedirs(config.CORPUS_DIR, exist_ok=True)
+    if name.lower().endswith(".fb2.zip"):
+        stem, ext = name[:-len(".fb2.zip")], name[-len(".fb2.zip"):]
+    else:
+        stem, ext = os.path.splitext(name)
+    # the very same file is already in corpus/ (e.g. dropped twice): reuse it instead of storing a copy
+    import hashlib
+    digest = hashlib.sha256(body).hexdigest()
+    same = next((p for p in glob.glob(os.path.join(str(config.CORPUS_DIR), "*"))
+                 if os.path.isfile(p) and os.path.getsize(p) == len(body) and _file_sha256(p) == digest), None)
+    target, n = os.path.join(str(config.CORPUS_DIR), name), 2
+    while same is None and os.path.exists(target):
+        target, n = os.path.join(str(config.CORPUS_DIR), f"{stem}_{n}{ext}"), n + 1
+    if same is not None:
+        target = same
+    else:
+        with open(target, "wb") as f:
+            f.write(body)
+    try:
+        meta = core_parser.read_book_meta(target)
+    except Exception as exc:  # noqa: BLE001
+        if same is None:
+            os.remove(target)
+        raise HTTPException(400, f"Не удалось прочитать файл как книгу: {exc}")
+    stem_name = os.path.splitext(os.path.basename(target))[0]
+    return {"file": "corpus/" + os.path.basename(target), "title": meta.get("title") or stem_name,
+            "author": meta.get("author"), "language": meta.get("language"),
+            "book_id": suggest_book_id(meta.get("title"), stem_name), "size_bytes": len(body)}
+
+
+@app.get("/api/books/preview")
+def api_books_preview(file: str):
+    """What a book source contains (chapters / paragraphs / language) - parses the file, no database is touched."""
+    if os.path.isabs(file):
+        path = file
+    elif file.replace("\\", "/").startswith("corpus/"):
+        path = os.path.join(str(config.CORPUS_DIR), file.replace("\\", "/")[len("corpus/"):])
+    else:
+        path = os.path.join(str(config.ROOT), file)
+    path = os.path.realpath(path)
+    allowed = (os.path.realpath(str(config.CORPUS_DIR)), os.path.realpath(str(config.ROOT)))
+    if not any(path == a or path.startswith(a + os.sep) for a in allowed) or not os.path.isfile(path) \
+            or not _is_book_file(path):
+        raise HTTPException(400, "Файл не найден среди исходных книг")
+    try:
+        data = core_parser.load_book(path)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, f"Не удалось разобрать книгу: {exc}")
+    recs = data.records
+    texts = [(r.get(data.lang or "ru") or r.get("ru") or r.get("en") or "") for r in recs[len(recs) // 3:] + recs]
+    sample = next((t for t in texts if len(t) >= 40), "")
+    return {"file": file, "paragraphs": len(recs), "chapters": len({r["paper"] for r in recs}),
+            "language": data.lang or "bilingual", "title": data.meta.get("title"), "author": data.meta.get("author"),
+            "sample": (sample or "")[:300], "trial": _looks_like_trial(recs)}
+
+
+def _looks_like_trial(recs) -> bool:
+    """A shop's free excerpt (LitRes etc.) rather than the whole book: it ends with «Конец ознакомительного
+    фрагмента» / a «buy the full version» note."""
+    tail = " ".join((r.get("ru") or r.get("en") or "") for r in recs[-6:]).lower()
+    return any(s in tail for s in ("ознакомительного фрагмента", "полную версию", "литрес", "end of sample",
+                                   "end of this sample"))
+
+
+@app.delete("/api/books/{book_id}")
+def api_books_delete(book_id: str):
+    """Remove a book from the library (its book.db folder). The source file in corpus/ stays."""
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", book_id) or book_id not in _library_ids():
+        raise HTTPException(404, "Книга не найдена")
+    if book_id == state.book_id or book_id == config.load_settings().get("active_book"):
+        raise HTTPException(409, "Это активная книга: сначала сделайте активной другую.")
+    if any(j.type == "index" and j.status in ("queued", "running") for j in job_manager.list()):
+        raise HTTPException(409, "Сейчас идёт индексация — дождитесь завершения.")
+    state.drop_handle(book_id)
+    import shutil
+    shutil.rmtree(os.path.join(str(config.LIBRARY_DIR), book_id), ignore_errors=True)
+    _BOOK_ROW_CACHE.pop(book_id, None)
+    settings = config.load_settings()
+    if book_id in (settings.get("search_books") or []):
+        settings["search_books"] = [b for b in settings["search_books"] if b != book_id]
+        config.save_settings(settings)
+    return {"ok": True}
+
+
 @app.get("/api/source-files")
 def api_source_files():
-    """List *.json/*.md source files for the index-source picker (the browser can't hand us an
+    """List *.json/*.md/*.epub/*.fb2/*.fb2.zip source files for the index-source picker (the browser can't hand us an
     arbitrary local path): the «corpus» folder first, then the program folder (older layout).
     Names are relative to the program folder, e.g. «corpus/book.json»."""
     names = []
     for folder, prefix in ((config.CORPUS_DIR, "corpus/"), (config.ROOT, "")):
-        for pat in ("*.json", "*.md"):
+        for pat in ("*.json", "*.md", "*.epub", "*.fb2", "*.fb2.zip"):
             names += sorted(prefix + os.path.basename(f) for f in glob.glob(os.path.join(folder, pat)))
     return {"files": [n for n in names if n.lower() not in ("readme.md",)]}
 

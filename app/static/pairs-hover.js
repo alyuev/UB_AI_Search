@@ -37,10 +37,16 @@
     }
   }
 
+  // the book of a card / of the reading page (data-book), so that a paragraph of another book is looked up there
+  function bookQuery(el) {
+    const b = el.closest && el.closest("[data-book]");
+    return b && b.dataset.book ? "?book_id=" + encodeURIComponent(b.dataset.book) : "";
+  }
+
   function prepare(langs) {
     if (loaded.has(langs)) return loaded.get(langs);
     const id = paraId(langs);
-    const p = !id ? Promise.resolve() : fetch(`/api/paragraph/${encodeURIComponent(id)}/pairs`)
+    const p = !id ? Promise.resolve() : fetch(`/api/paragraph/${encodeURIComponent(id)}/pairs${bookQuery(langs)}`)
       .then((r) => {
         if (!r.ok) throw new Error(`pairs: HTTP ${r.status}`);
         return r.json();

@@ -86,7 +86,18 @@ def _where(p: dict) -> str:
 
 
 def _para_out(p: dict) -> dict:
-    return {"id": p["id"], "where": _where(p), "ru": _clean(p.get("ru")), "en": _clean(p.get("en"))}
+    out = {"id": p["id"], "where": _where(p), "ru": _clean(p.get("ru")), "en": _clean(p.get("en"))}
+    if p.get("book_id"):
+        out["book_id"], out["book_name"] = p["book_id"], p.get("book_name") or p["book_id"]
+    return out
+
+
+def _ids_arg(book_ids) -> Optional[list[str]]:
+    """book_ids from an agent: a list or a comma-separated string; None/empty = the saved selection in the program."""
+    if isinstance(book_ids, str):
+        book_ids = book_ids.split(",")
+    ids = [b.strip() for b in (book_ids or []) if isinstance(b, str) and b.strip()]
+    return ids or None
 
 
 def _fit(text: str) -> str:
@@ -97,8 +108,10 @@ def format_search(query: str, results: list[dict]) -> str:
     if not results:
         return f"🔎 *{query}*\n\nВ книге ничего не найдено."
     lines = [f"🔎 *{query}* — найдено абзацев: {len(results)}", ""]
+    several = len({p.get("book_id") for p in results}) > 1
     for i, p in enumerate(results, 1):
-        lines.append(f"{i}. `{p['id']}` — _{_where(p)}_")
+        book = f" · «{p.get('book_name') or p.get('book_id')}»" if several else ""
+        lines.append(f"{i}. `{p['id']}` — _{_where(p)}_{book}")
         lines.append(f"   {_quote(p.get('ru') or p.get('en'))}")
         lines.append("")
     return _fit("\n".join(lines).rstrip())
@@ -125,12 +138,13 @@ def format_answer(question: str, result: dict) -> str:
 
 # ----------------------------------------------------------------- actions ---
 
-def do_search(query: str, k: int = 5, mode: str = "hybrid") -> dict:
+def do_search(query: str, k: int = 5, mode: str = "hybrid", book_ids=None) -> dict:
     query = (query or "").strip()
     if not query:
         raise HTTPException(400, "Пустой запрос")
     k = max(1, min(int(k or 5), 30))
-    data = _srv().api_search(q=query, mode=mode, k=k, lang=None, history=1)
+    ids = _ids_arg(book_ids)
+    data = _srv().api_search(q=query, mode=mode, k=k, lang=None, history=1, book_ids=",".join(ids) if ids else None)
     results = data["results"]
     return {"query": query, "results": [_para_out(p) for p in results], "text": format_search(query, results)}
 
@@ -165,12 +179,13 @@ def _wait(job, wait: float) -> None:
 
 
 def do_ask(question: str, wait: float = ASK_WAIT_DEFAULT, overview: Optional[bool] = None,
-           k: Optional[int] = None) -> dict:
+           k: Optional[int] = None, book_ids=None) -> dict:
     question = (question or "").strip()
     if not question:
         raise HTTPException(400, "Пустой вопрос")
     srv = _srv()
-    started = srv.api_job_rag(srv.RagJobRequest(question=question, overview=overview, k=k))
+    started = srv.api_job_rag(srv.RagJobRequest(question=question, overview=overview, k=k,
+                                                         book_ids=_ids_arg(book_ids)))
     job = srv.job_manager.get(started["job_id"])
     _QUESTIONS[job.job_id] = question
     _wait(job, max(0.0, min(float(wait), ASK_WAIT_MAX)))
@@ -185,13 +200,14 @@ def do_get_answer(job_id: str, wait: float = 60) -> dict:
     return _job_reply(job, _QUESTIONS.get(job_id, ""))
 
 
-def do_get_paragraph(para_id: str, context: int = 0) -> dict:
+def do_get_paragraph(para_id: str, context: int = 0, book_id: Optional[str] = None) -> dict:
     srv = _srv()
+    book_id = (book_id or "").strip() or None
     if context:
         n = max(0, min(int(context), 5))
-        paras = srv.api_paragraph_context(para_id, before=n, after=n)["context"]
+        paras = srv.api_paragraph_context(para_id, before=n, after=n, book_id=book_id)["context"]
     else:
-        paras = [srv.api_paragraph(para_id)]
+        paras = [srv.api_paragraph(para_id, book_id=book_id)]
     lines = []
     for p in paras:
         lines += [f"`{p['id']}` — _{_where(p)}_", _clean(p.get("ru")), f"_{_clean(p.get('en'))}_", ""]
@@ -205,18 +221,19 @@ class AskRequest(BaseModel):
     wait: float = ASK_WAIT_DEFAULT
     overview: Optional[bool] = None
     k: Optional[int] = None
+    book_ids: Optional[list[str]] = None
 
 
 @router.get("/api/agent/search")
-def rest_search(request: Request, q: str, k: int = 5, mode: str = "hybrid"):
+def rest_search(request: Request, q: str, k: int = 5, mode: str = "hybrid", book_ids: Optional[str] = None):
     _check_access(request)
-    return do_search(q, k, mode)
+    return do_search(q, k, mode, book_ids)
 
 
 @router.post("/api/agent/ask")
 def rest_ask(request: Request, req: AskRequest):
     _check_access(request)
-    return do_ask(req.question, req.wait, req.overview, req.k)
+    return do_ask(req.question, req.wait, req.overview, req.k, req.book_ids)
 
 
 @router.get("/api/agent/answer/{job_id}")
@@ -241,7 +258,10 @@ TOOLS = [
          "question": {"type": "string", "description": "Вопрос пользователя дословно"},
          "overview": {"type": "boolean",
                       "description": "true — обзор по всей книге (вопросы «перечисли все…», «где упоминается…»); "
-                                     "не указывай, программа решит сама"}},
+                                     "не указывай, программа решит сама"},
+         "book_ids": {"type": "array", "items": {"type": "string"},
+                      "description": "В каких книгах искать (id из списка книг программы). Не указывай — "
+                                     "возьмётся выбор, сохранённый в программе"}},
          "required": ["question"]}},
     {"name": "search_book",
      "description": ("Найти абзацы «Книги Урантии» по словам и смыслу, без ответа модели (быстро, ~1 с). "
@@ -250,7 +270,10 @@ TOOLS = [
          "query": {"type": "string", "description": "Что искать (русский или английский)"},
          "k": {"type": "integer", "minimum": 1, "maximum": 30, "default": 5, "description": "Сколько абзацев"},
          "mode": {"type": "string", "enum": ["hybrid", "fts", "semantic"], "default": "hybrid",
-                  "description": "hybrid — слова+смысл; fts — точные слова (фраза в кавычках); semantic — смысл"}},
+                  "description": "hybrid — слова+смысл; fts — точные слова (фраза в кавычках); semantic — смысл"},
+         "book_ids": {"type": "array", "items": {"type": "string"},
+                      "description": "В каких книгах искать (id из списка книг программы). Не указывай — "
+                                     "возьмётся выбор, сохранённый в программе"}},
          "required": ["query"]}},
     {"name": "get_answer",
      "description": "Получить ответ на вопрос, который ask_book не успел дождаться (по job_id). " + _FORWARD,
@@ -261,20 +284,22 @@ TOOLS = [
      "inputSchema": {"type": "object", "properties": {
          "id": {"type": "string", "description": "Номер абзаца, например 147:2.4"},
          "context": {"type": "integer", "minimum": 0, "maximum": 5, "default": 0,
-                     "description": "Сколько соседних абзацев показать до и после"}},
+                     "description": "Сколько соседних абзацев показать до и после"},
+         "book_id": {"type": "string", "description": "Книга абзаца (поле book_id из результата поиска); "
+                                                      "по умолчанию — активная книга программы"}},
          "required": ["id"]}},
 ]
 
 
 def _call_tool(name: str, args: dict) -> dict:
     if name == "ask_book":
-        return do_ask(args.get("question", ""), overview=args.get("overview"))
+        return do_ask(args.get("question", ""), overview=args.get("overview"), book_ids=args.get("book_ids"))
     if name == "search_book":
-        return do_search(args.get("query", ""), args.get("k", 5), args.get("mode", "hybrid"))
+        return do_search(args.get("query", ""), args.get("k", 5), args.get("mode", "hybrid"), args.get("book_ids"))
     if name == "get_answer":
         return do_get_answer(args.get("job_id", ""))
     if name == "get_paragraph":
-        return do_get_paragraph(args.get("id", ""), args.get("context", 0))
+        return do_get_paragraph(args.get("id", ""), args.get("context", 0), args.get("book_id"))
     raise KeyError(name)
 
 

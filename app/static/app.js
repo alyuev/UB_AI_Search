@@ -65,7 +65,7 @@ const STAGE_LABELS = {
   "Анализ смысловых расхождений": "Анализ расхождений",
   "Формирование отчёта": "Формирование отчёта",
   // real app.core.indexer stage names
-  parsing: "Разбор JSON", database: "Запись абзацев", lemmatize: "Лемматизация RU",
+  parsing: "Разбор книги", database: "Запись абзацев", lemmatize: "Лемматизация RU",
   embedding: "Эмбеддинги", finalize: "Финализация",
 };
 
@@ -165,9 +165,11 @@ async function runQuery(replayId = null) {
     const smode = $$('input[name="smode"]').find((r) => r.checked).value;
     try {
       renderStages(panel, { stages: [{ name: "fts", state: "active" }], progress: 0.5, message: "Поиск…", status: "running" });
-      const data = await api(`/api/search?q=${encodeURIComponent(q)}&mode=${smode}&k=10`);
+      const books = selectedBooks();
+      const data = await api(`/api/search?q=${encodeURIComponent(q)}&mode=${smode}&k=10${books.length ? "&book_ids=" + encodeURIComponent(books.join(",")) : ""}`);
       renderStages(panel, { stages: [{ name: "fts", state: "done" }], progress: 1, message: `Найдено: ${data.results.length}`, status: "done" });
-      renderResults(data.results);
+      const warn = (data.warnings || []).map((w) => `<div class="msg-box info">${escapeHtml(bookNameOf(w.book_id))}: ${escapeHtml(w.message)}</div>`).join("");
+      renderResults(data.results, warn, (data.book_ids || []).length > 1);
       afterQuery();
     } catch (e) {
       renderStages(panel, { stages: [], progress: 1, message: "Ошибка: " + e.message, status: "error" });
@@ -178,7 +180,7 @@ async function runQuery(replayId = null) {
         method: "POST", headers: { "Content-Type": "application/json" },
         // no `k`: the server uses the «Сколько абзацев передавать модели» setting;
         // «Обзор по всей книге» forces the overview, otherwise the server decides
-        body: JSON.stringify({ question: q, ...replay, ...(mode === "overview" ? { overview: true } : {}) }),
+        body: JSON.stringify({ question: q, book_ids: selectedBooks(), ...replay, ...(mode === "overview" ? { overview: true } : {}) }),
       });
       pollJob(job_id, panel, (job) => {
         afterQuery();
@@ -219,17 +221,18 @@ function crumbs(p) {
   const pick = (t) => (t ? escapeHtml((queryIsRu() ? t.ru || t.en : t.en || t.ru) || "") : "");
   const paper = pick(p.paper_title), section = pick(p.section_title);
   if (!paper && !section) return "";
-  const pa = paper ? `<a class="read-link" href="${readHref({ paper: p.paper })}" title="Читать весь документ"><b>${paper}</b></a>` : "";
-  const se = section ? `<a class="read-link" href="${readHref({ paper: p.paper, section: p.section })}" title="Читать с начала раздела">${section}</a>` : "";
+  const pa = paper ? `<a class="read-link" href="${readHref({ paper: p.paper, book: p.book_id })}" title="Читать весь документ"><b>${paper}</b></a>` : "";
+  const se = section ? `<a class="read-link" href="${readHref({ paper: p.paper, section: p.section, book: p.book_id })}" title="Читать с начала раздела">${section}</a>` : "";
   return `<span class="crumbs">${pa}${paper && section ? " · " : ""}${se}</span>`;
 }
 
-function readHref({ paper, section = null, para = null }) {
+function readHref({ paper, section = null, para = null, book = "" }) {
   const h = new URLSearchParams();
   h.set("p", paper);
   if (section != null) h.set("s", section);
   if (para) h.set("para", para);
   if (lastQuery) h.set("q", lastQuery);
+  if (book) h.set("b", book);
   return `read.html#${h.toString()}`;
 }
 
@@ -250,26 +253,42 @@ function setLastQuery(q) {
 // One language column of a result card. `snippet` is server-side HTML-escaped text that
 // contains only <mark> tags (safe for innerHTML); when absent (semantic-only hits, no FTS
 // match in this language) fall back to the full text with client-side highlighting.
-function langBlock(cls, snippet, full) {
+// `fullHtml` is the book's inline formatting (italics etc.); the snippet always stays plain text.
+function langBlock(cls, snippet, full, fullHtml) {
+  const fullShown = RichText.render(full, fullHtml, (t) => highlight(t, lastQuery));
   if (snippet) {
-    return `<div class="${cls}"><span class="snip">${snippet}</span><span class="full">${highlight(full, lastQuery)}</span></div>`;
+    return `<div class="${cls}"><span class="snip">${snippet}</span><span class="full">${fullShown}</span></div>`;
   }
-  return `<div class="${cls}">${highlight(full, lastQuery)}</div>`;
+  return `<div class="${cls}">${fullShown}</div>`;
+}
+
+// Show the book name on a hit only when hits of several books can meet (set by renderResults).
+let badgeBooks = false;
+
+// The EN/RU columns of one paragraph; a one-language book (one of them empty) gets a single wide column.
+function langsInner(p, withSnippets) {
+  const hasEn = !!(p.en || "").trim(), hasRu = !!(p.ru || "").trim();
+  const col = (cls, snip, full, html) => (withSnippets ? langBlock(cls, snip, full, html)
+    : `<div class="${cls}">${RichText.render(full, html, escapeHtml)}</div>`);
+  const en = hasEn || !hasRu ? col("en", p.snippet_en, p.en, p.en_html) : "";
+  const ru = hasRu || !hasEn ? col("ru", p.snippet_ru, p.ru, p.ru_html) : "";
+  return { html: en + ru, mono: !(hasEn && hasRu) };
 }
 
 function cardHtml(p) {
   const hasSnip = !!(p.snippet_en || p.snippet_ru);
+  const langs = langsInner(p, true);
+  const badge = badgeBooks && p.book_name ? `<span class="book-badge" title="Книга: ${escapeHtml(p.book_name)}">${escapeHtml(p.book_name)}</span>` : "";
+  const tint = badgeBooks && p.book_id ? ` book-tinted" style="--bk:${bookColor(p.book_id)}` : "";
   return `
-    <div class="card" data-id="${p.id}">
+    <div class="card${tint}" data-id="${p.id}" data-book="${escapeHtml(p.book_id || "")}">
       <div class="card-head">
-        <a class="ref read-link" href="${readHref({ paper: p.paper, para: p.id })}" title="Открыть абзац в тексте документа (документ ${p.paper}, раздел ${p.section}, абзац ${p.paragraph})">${p.id}</a>
+        ${badge}
+        <a class="ref read-link" href="${readHref({ paper: p.paper, para: p.id, book: p.book_id })}" title="Открыть абзац в тексте документа (документ ${p.paper}, раздел ${p.section}, абзац ${p.paragraph})">${p.id}</a>
         ${crumbs(p)}
         <span class="ranks" title="score: ${(p.score ?? 0).toFixed?.(3) ?? p.score}">${rankBadge("слова", p.fts_rank)}${rankBadge("смысл", p.sem_rank)}</span>
       </div>
-      <div class="card-langs">
-        ${langBlock("en", p.snippet_en, p.en)}
-        ${langBlock("ru", p.snippet_ru, p.ru)}
-      </div>
+      <div class="card-langs${langs.mono ? " mono" : ""}">${langs.html}</div>
       <div class="card-actions">
         <button class="secondary ctx-btn" data-id="${p.id}">Контекст</button>
         ${hasSnip ? `<button class="secondary snip-btn">Весь абзац</button>` : ""}
@@ -295,10 +314,11 @@ function sortedForView(items) {
   return [...items].sort((a, b) => (a.paper - b.paper) || (a.section - b.section) || (a.paragraph - b.paragraph));
 }
 
-function renderResults(items, prefixHtml = "") {
+function renderResults(items, prefixHtml = "", badges = null) {
   const results = $("#results");
   lastView = null;
   lastSearchItems = items;
+  badgeBooks = badges != null ? badges : (new Set(items.map((p) => p.book_id)).size > 1 || selectedBooks().length > 1);
   if (!items.length) { results.innerHTML = prefixHtml + `<div class="card">Ничего не найдено.</div>`; return; }
   results.innerHTML = prefixHtml + sortedForView(items).map(cardHtml).join("");
   bindCardHandlers(results);
@@ -315,11 +335,12 @@ async function toggleContext(btn) {
   const block = card.querySelector(".context-block");
   if (block.style.display !== "none") { block.style.display = "none"; return; }
   const id = btn.dataset.id;
-  const data = await api(`/api/paragraph/${id}/context?before=2&after=2`);
-  block.innerHTML = data.context.map((p) => `
-    <div class="card-langs" data-id="${p.id}" style="margin-top:6px;${String(p.id) === id ? "font-weight:600" : ""}">
-      <div class="en">${escapeHtml(p.en)}</div><div class="ru">${escapeHtml(p.ru)}</div>
-    </div>`).join("");
+  const book = card.dataset.book || "";
+  const data = await api(`/api/paragraph/${id}/context?before=2&after=2${book ? "&book_id=" + encodeURIComponent(book) : ""}`);
+  block.innerHTML = data.context.map((p) => {
+    const l = langsInner(p, false);
+    return `<div class="card-langs${l.mono ? " mono" : ""}" data-id="${p.id}" style="margin-top:6px;${String(p.id) === id ? "font-weight:600" : ""}">${l.html}</div>`;
+  }).join("");
   block.style.display = "block";
 }
 
@@ -391,6 +412,7 @@ function modelLineHtml(result) {
 }
 
 function renderRagAnswer(result, errText) {
+  badgeBooks = false;   // a question is answered over one book
   const results = $("#results");
   lastView = () => renderRagAnswer(result, errText);
   const brokenText = errText || (result && result.truncated ? result.error : "");
@@ -632,7 +654,7 @@ function doWarnAction(id) {
   } else if (id === "open_embeddings") {
     document.querySelector('.tab-btn[data-tab="settings"]').click();
   } else if (id === "select_book") {
-    $("#book-select").focus();
+    openBooksMenu();
   }
 }
 
@@ -933,18 +955,227 @@ $("#save-search-settings-btn").addEventListener("click", async () => {
 
 
 // ------------------------------------------------------------ book picker ---
+// The list of books with checkboxes: search covers the ticked books (saved on the server, «search_books»);
+// the «основная» book is the one for reading, the table of contents and the «База данных» tab.
+let booksData = { books: [], search_books: [], active_book: null };
+// Stable per-book colour (by position in the library list) to tell hits of different books apart.
+const BOOK_COLORS = ["#2f7dd1", "#d9822b", "#2e9e6a", "#b4489c", "#c9a227", "#16a2b8", "#d04545", "#6f5bd6"];
+function bookColor(id) {
+  const i = (booksData.books || []).findIndex((b) => b.book_id === id);
+  if (i >= 0 && booksData.books[i].color) return booksData.books[i].color;   // chosen in «О книге»
+  return BOOK_COLORS[(i < 0 ? 0 : i) % BOOK_COLORS.length];
+}
+const bookNameOf = (id) => (booksData.books.find((b) => b.book_id === id) || {}).book_name || id;
+const selectedBooks = () => booksData.books.filter((b) => b.selected).map((b) => b.book_id);
+
+function setSelectedBooks(ids) {
+  const known = new Set(booksData.books.map((b) => b.book_id));
+  const want = new Set(ids.filter((i) => known.has(i)));
+  if (!want.size) return;
+  booksData.books.forEach((b) => { b.selected = want.has(b.book_id); });
+  renderBooksMenu();
+  saveBookSelection();
+}
+
+let saveSelTimer = null;
+function saveBookSelection() {
+  clearTimeout(saveSelTimer);
+  saveSelTimer = setTimeout(() => {
+    api("/api/books/search-selection", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ book_ids: selectedBooks() }),
+    }).catch((e) => console.error("save book selection:", e));
+  }, 250);
+}
+
+function bookMeta(b) {
+  const lang = b.bilingual ? "EN+RU" : ({ ru: "рус", en: "англ" }[b.language] || b.language || "");
+  return [lang, b.paragraphs != null ? `${b.paragraphs.toLocaleString("ru-RU")} абз.` : ""].filter(Boolean).join(" · ");
+}
+
+function renderBooksSummary() {
+  const bs = booksData.books, sel = bs.filter((b) => b.selected);
+  let txt = "(нет баз)";
+  if (bs.length) txt = sel.length === bs.length && bs.length > 1 ? `все (${bs.length})` : sel.length === 1 ? sel[0].book_name : `${sel.length} из ${bs.length}`;
+  $("#books-summary").textContent = txt;
+  $("#books-btn").title = sel.map((b) => b.book_name).join("\n") || "Книги, по которым идёт поиск";
+}
+
+// Order of the list: fixed when the menu opens (ticked books first, each group by name), so ticking a box
+// doesn't reshuffle rows under the mouse. Books added later go to the end until the next opening.
+let booksOrder = [];
+function sortBooksForMenu() {
+  const byName = (a, b) => a.book_name.localeCompare(b.book_name, "ru", { sensitivity: "base" });
+  const bs = booksData.books;
+  booksOrder = [...bs.filter((b) => b.selected).sort(byName), ...bs.filter((b) => !b.selected).sort(byName)].map((b) => b.book_id);
+}
+function orderedBooks() {
+  const bs = booksData.books, pos = new Map(booksOrder.map((id, i) => [id, i]));
+  return [...bs].sort((a, b) => (pos.has(a.book_id) ? pos.get(a.book_id) : 1e9) - (pos.has(b.book_id) ? pos.get(b.book_id) : 1e9));
+}
+const normFilter = (s) => (s || "").toLowerCase().replace(/ё/g, "е").trim();
+function visibleBooks() {
+  const words = normFilter($("#bm-filter") ? $("#bm-filter").value : "").split(/\s+/).filter(Boolean);
+  return orderedBooks().filter((b) => {
+    const hay = normFilter(b.book_name + " " + b.book_id);
+    return words.every((w) => hay.includes(w));
+  });
+}
+
+function renderBooksMenu() {
+  const menu = $("#books-menu");
+  renderBooksSummary();
+  if (!booksData.books.length) { menu.innerHTML = `<div class="bm-foot">В библиотеке нет книг. Нажмите «+», чтобы добавить.</div>`; return; }
+  if (!$("#bm-filter")) {   // skeleton once: the filter box keeps its text and focus while the list redraws
+    menu.innerHTML = `
+      <div class="bm-head">
+        <input id="bm-filter" type="search" placeholder="Быстрый поиск книги…" autocomplete="off" spellcheck="false" />
+        <div class="bm-row bm-all"><label><input type="checkbox" id="bm-all"> <span id="bm-all-text">Все книги</span></label></div>
+      </div>
+      <div class="bm-list" id="bm-list"></div>
+      <div class="bm-foot">Поиск идёт по отмеченным книгам. «Вопрос к тексту» отвечает по одной книге (основной, если она отмечена).</div>`;
+    $("#bm-filter").addEventListener("input", renderBooksList);
+    $("#bm-filter").addEventListener("keydown", (ev) => { if (ev.key === "Escape" && ev.target.value) { ev.stopPropagation(); ev.target.value = ""; renderBooksList(); } });
+    $("#bm-all").addEventListener("change", (ev) => {
+      // with a filter typed, «все» means all books shown by the filter
+      const vis = visibleBooks(), bs = booksData.books;
+      vis.forEach((b) => { b.selected = ev.target.checked; });
+      if (!bs.some((b) => b.selected)) (bs.find((b) => b.active) || bs[0]).selected = true;   // at least one book stays
+      renderBooksSummary(); renderBooksList(); saveBookSelection();
+    });
+  }
+  renderBooksList();
+}
+
+function renderBooksList() {
+  const list = $("#bm-list");
+  if (!list) return;
+  const bs = booksData.books, vis = visibleBooks(), filtered = !!normFilter($("#bm-filter").value);
+  const allBox = $("#bm-all");
+  allBox.checked = vis.length > 0 && vis.every((b) => b.selected);
+  allBox.indeterminate = !allBox.checked && vis.some((b) => b.selected);
+  $("#bm-all-text").textContent = filtered ? `Все найденные (${vis.length})` : `Все книги (${bs.length})`;
+  list.innerHTML = vis.length ? vis.map((b) => `<div class="bm-row" data-id="${escapeHtml(b.book_id)}">
+      <label title="Искать в этой книге"><input type="checkbox" data-sel="${escapeHtml(b.book_id)}" ${b.selected ? "checked" : ""}>
+        <span class="bm-dot" style="background:${bookColor(b.book_id)}"></span><span class="bm-name" title="${escapeHtml(b.book_name)}">${escapeHtml(b.book_name)}</span></label>
+      <span class="bm-meta">${escapeHtml(bookMeta(b))}</span>
+      <button type="button" class="bm-btn" data-info="${escapeHtml(b.book_id)}" title="О книге: файл, название, цвет">ℹ</button>
+      ${b.active ? `<span class="bm-main" title="Основная книга: чтение, оглавление, вкладка «База данных»">основная</span>`
+        : `<button type="button" class="bm-btn" data-main="${escapeHtml(b.book_id)}" title="Сделать основной (чтение, оглавление, «База данных»)">☆</button>
+           <button type="button" class="bm-btn" data-del="${escapeHtml(b.book_id)}" title="Удалить книгу из библиотеки">🗑</button>`}
+    </div>`).join("") : `<div class="bm-empty">Ничего не найдено</div>`;
+  list.querySelectorAll("[data-sel]").forEach((cb) => cb.addEventListener("change", () => {
+    const b = bs.find((x) => x.book_id === cb.dataset.sel);
+    b.selected = cb.checked;
+    if (!bs.some((x) => x.selected)) { b.selected = true; cb.checked = true; }   // at least one book stays
+    renderBooksSummary(); renderBooksList(); saveBookSelection();
+  }));
+  list.querySelectorAll("[data-main]").forEach((btn) => btn.addEventListener("click", () => makeMainBook(btn.dataset.main)));
+  list.querySelectorAll("[data-del]").forEach((btn) => btn.addEventListener("click", () => deleteBook(btn.dataset.del)));
+  list.querySelectorAll("[data-info]").forEach((btn) => btn.addEventListener("click", () => openBookInfo(btn.dataset.info)));
+}
+
+// ------------------------------------------------------- «О книге» -----
+const fmtBytes = (n) => n == null ? "—" : n >= 1048576 ? (n / 1048576).toFixed(1).replace(".", ",") + " МБ" : Math.max(1, Math.round(n / 1024)) + " КБ";
+const LANG_RU = { ru: "русский", en: "английский" };
+let bookInfoId = null;
+
+async function openBookInfo(book_id) {
+  const dlg = $("#book-info-dialog");
+  bookInfoId = book_id;
+  $("#bi-error").classList.add("hidden");
+  $("#bi-facts").innerHTML = "Загрузка…";
+  if (!dlg.open) dlg.showModal();
+  try {
+    const i = await api(`/api/books/${encodeURIComponent(book_id)}/info`);
+    $("#bi-name").value = i.book_name;
+    $("#bi-color").value = i.color || bookColor(book_id);
+    $("#bi-color-auto").classList.toggle("hidden", !i.color);
+    const lang = i.translation ? `${LANG_RU[i.language] || i.language} + ${LANG_RU[i.translation] || i.translation}` : (LANG_RU[i.language] || i.language || "—");
+    const when = i.created_at ? new Date(i.created_at + (i.created_at.endsWith("Z") ? "" : "Z")).toLocaleString("ru-RU") : "—";
+    const row = (k, v) => `<dt>${k}</dt><dd>${v}</dd>`;
+    $("#bi-facts").innerHTML = `<dl>` +
+      (i.author ? row("Автор", escapeHtml(i.author)) : "") +
+      row("Исходный файл", i.source_file ? `<code>${escapeHtml(i.source_file)}</code> ${i.source_exists ? `(${fmtBytes(i.source_size_bytes)})` : `<span class="bi-warn">— файла больше нет</span>`}` : "—") +
+      (i.title_in_file && i.title_in_file !== i.book_name ? row("Название в файле", escapeHtml(i.title_in_file)) : "") +
+      row("Язык", escapeHtml(lang)) +
+      row("Объём", `${(i.chapters || 0).toLocaleString("ru-RU")} глав · ${(i.paragraphs || 0).toLocaleString("ru-RU")} абзацев`) +
+      row("База", `<code>${escapeHtml(i.db_path)}</code> (${fmtBytes(i.db_size_bytes)})`) +
+      row("Проиндексирована", escapeHtml(when)) +
+      row("Модель смысла", escapeHtml([i.embedding_model, i.embedding_runtime].filter(Boolean).join(" · ") || "—")) +
+      row("ID", `<code>${escapeHtml(i.book_id)}</code>${i.active ? " · основная книга" : ""}`) +
+      `</dl>`;
+  } catch (e) {
+    $("#bi-facts").innerHTML = "";
+    $("#bi-error").textContent = "Не удалось получить сведения: " + e.message;
+    $("#bi-error").classList.remove("hidden");
+  }
+}
+
+async function saveBookInfo(body) {
+  try {
+    await api(`/api/books/${encodeURIComponent(bookInfoId)}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    });
+    await loadBooks();
+    // repaint shown hits with the new name / colour
+    if (lastView === null && lastSearchItems && $("#results .card[data-id]")) {
+      lastSearchItems.forEach((p) => { if (p.book_id === bookInfoId) p.book_name = bookNameOf(bookInfoId); });
+      renderResults(lastSearchItems, "", badgeBooks);
+    } else {
+      document.querySelectorAll(`#results .card[data-book="${CSS.escape(bookInfoId)}"]`).forEach((c) => c.style.setProperty("--bk", bookColor(bookInfoId)));
+    }
+    return true;
+  } catch (e) {
+    $("#bi-error").textContent = "Не удалось сохранить: " + e.message;
+    $("#bi-error").classList.remove("hidden");
+    return false;
+  }
+}
+
+$("#bi-save").addEventListener("click", async () => {
+  const b = booksData.books.find((x) => x.book_id === bookInfoId) || {};
+  const body = {};
+  const name = $("#bi-name").value.trim();
+  if (name && name !== b.book_name) body.book_name = name;
+  const col = $("#bi-color").value;
+  if (col.toLowerCase() !== bookColor(bookInfoId).toLowerCase()) body.color = col;
+  if (Object.keys(body).length && !(await saveBookInfo(body))) return;
+  $("#book-info-dialog").close();
+});
+$("#bi-color-auto").addEventListener("click", async () => {
+  if (await saveBookInfo({ color: "" })) openBookInfo(bookInfoId);
+});
+$("#bi-close").addEventListener("click", () => $("#book-info-dialog").close());
+
+
 async function loadBooks() {
   try {
-    const data = await api("/api/books");
-    const sel = $("#book-select");
-    sel.innerHTML = data.books.length
-      ? data.books.map((b) => `<option value="${escapeHtml(b.book_id)}" ${b.active ? "selected" : ""}>${escapeHtml(b.book_id)}</option>`).join("")
-      : `<option value="">(нет баз)</option>`;
+    booksData = await api("/api/books");
+    renderBooksMenu();
   } catch (e) {}
 }
-$("#book-select").addEventListener("change", async (ev) => {
-  const book_id = ev.target.value;
-  if (!book_id) return;
+
+function openBooksMenu() {
+  const menu = $("#books-menu"), btn = $("#books-btn");
+  const r = btn.getBoundingClientRect();
+  menu.style.top = r.bottom + 6 + "px";
+  menu.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 380)) + "px";
+  // the list scrolls inside the menu: never taller than the space under the button
+  menu.style.maxHeight = Math.max(200, window.innerHeight - r.bottom - 16) + "px";
+  sortBooksForMenu();
+  if ($("#bm-filter")) $("#bm-filter").value = "";
+  renderBooksMenu();
+  menu.classList.remove("hidden");
+  btn.setAttribute("aria-expanded", "true");
+  if ($("#bm-filter")) $("#bm-filter").focus();
+}
+function closeBooksMenu() { $("#books-menu").classList.add("hidden"); $("#books-btn").setAttribute("aria-expanded", "false"); }
+$("#books-btn").addEventListener("click", (ev) => { ev.stopPropagation(); $("#books-menu").classList.contains("hidden") ? openBooksMenu() : closeBooksMenu(); });
+// clicks and Esc inside a dialog opened from the menu («О книге», «Добавить книги») close only that dialog
+document.addEventListener("click", (ev) => { if (!ev.target.closest("#book-picker, dialog")) closeBooksMenu(); });
+document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && !document.querySelector("dialog[open]")) closeBooksMenu(); });
+
+async function makeMainBook(book_id) {
   try {
     const res = await api("/api/books/select", {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ book_id }),
@@ -957,8 +1188,302 @@ $("#book-select").addEventListener("change", async (ev) => {
     alert("Не удалось переключить книгу: " + e.message);
   }
   loadBooks();
-});
+}
+
+async function deleteBook(book_id) {
+  const name = bookNameOf(book_id);
+  if (!confirm(`Удалить книгу «${name}» из библиотеки?\n\nБудет удалена её база (папка library/${book_id}); исходный файл в папке corpus останется, книгу можно проиндексировать заново.`)) return;
+  try {
+    await api(`/api/books/${encodeURIComponent(book_id)}`, { method: "DELETE" });
+  } catch (e) { alert("Не удалось удалить книгу: " + e.message); }
+  loadBooks();
+}
 loadBooks();
+
+// ------------------------------------------------------------ add a book ---
+const AB = { file: null, meta: null, busy: false, jobId: null };
+const abDlg = () => $("#add-book-dialog");
+const abShow = (step) => ["file", "form", "progress", "batch"].forEach((n) => $(`#ab-step-${n}`).classList.toggle("hidden", n !== step));
+function abError(msg) { const el = $("#ab-error"); el.textContent = msg || ""; el.classList.toggle("hidden", !msg); }
+
+function abReset() {
+  AB.file = null; AB.meta = null; AB.jobId = null;
+  abShow("file"); abError("");
+  $("#ab-upload-msg").textContent = ""; $("#ab-file").value = "";
+  $("#ab-start").classList.add("hidden"); $("#ab-cancel-job").classList.add("hidden");
+  $("#ab-start-all").classList.add("hidden");
+  $("#ab-close").textContent = "Отмена";
+  if (!ABB.running) ABB.items = [];
+}
+
+// while a batch is indexing, «+» reopens its list instead of starting over
+$("#add-book-btn").addEventListener("click", () => { closeBooksMenu(); if (!ABB.running) abReset(); abDlg().showModal(); });
+$("#ab-close").addEventListener("click", () => abDlg().close());
+
+const abDrop = $("#ab-drop");
+abDrop.addEventListener("keydown", (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); $("#ab-file").click(); } });
+["dragenter", "dragover"].forEach((n) => abDrop.addEventListener(n, (ev) => { ev.preventDefault(); abDrop.classList.add("drag"); }));
+["dragleave", "drop"].forEach((n) => abDrop.addEventListener(n, (ev) => { ev.preventDefault(); abDrop.classList.remove("drag"); }));
+abDrop.addEventListener("drop", (ev) => abHandleFiles(ev.dataTransfer.files));
+$("#ab-file").addEventListener("change", (ev) => abHandleFiles(ev.target.files));
+
+async function abUpload(file, force = false) {
+  abError("");
+  if (!/\.(epub|fb2|fb2\.zip|json|md)$/i.test(file.name)) {
+    $("#ab-upload-msg").textContent = ""; abError("Этот формат не подходит. Нужны .epub, .fb2, .fb2.zip (или .json / .md)."); return;
+  }
+  $("#ab-upload-msg").textContent = `Загружаю «${file.name}» (${(file.size / 1e6).toFixed(1)} МБ)…`;
+  try {
+    const meta = await api(`/api/books/upload?filename=${encodeURIComponent(file.name)}${force ? "&force=true" : ""}`, {
+      method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: file,
+    });
+    if (meta.duplicate_of) {
+      const d = meta.duplicate_of;
+      $("#ab-upload-msg").textContent = "";
+      if (!confirm(`Эта книга уже есть в библиотеке: «${d.book_name}» (${d.reason}).\n\nВсё равно добавить её ещё раз отдельной книгой?`)) {
+        abError(`Книга «${d.book_name}» уже добавлена раньше — повторно не добавляю.`);
+        return;
+      }
+      return abUpload(file, true);
+    }
+    AB.file = meta.file; AB.meta = meta;
+    $("#ab-name").value = meta.title || "";
+    $("#ab-id").value = meta.book_id || "";
+    $("#ab-fileline").textContent = [file.name, meta.author, meta.language ? `язык: ${meta.language}` : ""].filter(Boolean).join(" · ");
+    $("#ab-preview").textContent = "Читаю книгу…";
+    abShow("form");
+    $("#ab-start").classList.remove("hidden");
+    abEmbedHint();
+    abPreview(meta.file);
+  } catch (e) {
+    $("#ab-upload-msg").textContent = ""; abError(e.message);
+  }
+}
+
+async function abPreview(file) {
+  try {
+    const p = await api(`/api/books/preview?file=${encodeURIComponent(file)}`);
+    const lang = { ru: "русский", en: "английский" }[p.language] || "русский + английский";
+    $("#ab-preview").innerHTML = (p.trial ? `<div class="ab-trial">⚠ Это ознакомительный фрагмент (в конце: «Конец ознакомительного фрагмента»), а не вся книга.</div>` : "") +
+      `Глав: <b>${p.chapters}</b> · абзацев: <b>${p.paragraphs.toLocaleString("ru-RU")}</b> · текст: ${lang}` +
+      (p.sample ? `<span class="sample">«${escapeHtml(p.sample)}…»</span>` : "");
+  } catch (e) { $("#ab-preview").textContent = "Не удалось прочитать книгу: " + e.message; }
+}
+
+// The embedding setup of the main book: vectors of all books must be comparable, so a new book is built the same way.
+function abEmbedSetup() {
+  const act = booksData.books.find((b) => b.active) || booksData.books[0] || {};
+  return { model_name: act.embedding_model || "bge-m3", runtime: act.embedding_runtime || "auto",
+           scheme: act.index_scheme || "D", vector_dtype: act.vector_dtype === "f32" ? "float32" : "int8" };
+}
+function abEmbedHint() {
+  const e = abEmbedSetup();
+  $("#ab-embed-hint").textContent = `Индексация займёт несколько минут (модель смысла: ${e.model_name}, как у основной книги).`;
+}
+
+$("#ab-start").addEventListener("click", async () => {
+  abError("");
+  const name = $("#ab-name").value.trim(), id = $("#ab-id").value.trim();
+  if (!name) { abError("Укажите название книги."); return; }
+  if (!/^[A-Za-z0-9_.-]+$/.test(id)) { abError("ID: только латинские буквы, цифры, «_», «-» и «.»."); return; }
+  if (booksData.books.some((b) => b.book_id === id) &&
+      !confirm(`Книга с ID «${id}» уже есть. Её база будет заменена после успешной сборки. Продолжить?`)) return;
+  const setup = abEmbedSetup();
+  let settings = {};
+  try { settings = await api("/api/settings"); } catch (e) {}
+  try {
+    const { job_id } = await api("/api/jobs/index", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ json_path: AB.file, book_id: id, book_name: name, ...setup, device: settings.device || "auto", embed_batch_size: 32 }),
+    });
+    AB.jobId = job_id;
+    abShow("progress");
+    $("#ab-start").classList.add("hidden");
+    $("#ab-cancel-job").classList.remove("hidden");
+    $("#ab-close").textContent = "Свернуть";
+    pollJob(job_id, $("#ab-step-progress .status-panel"), (job) => {
+      $("#ab-cancel-job").classList.add("hidden");
+      $("#ab-close").textContent = "Закрыть";
+      const msg = $("#ab-step-progress .msg");
+      if (job.status === "done" && job.result && !job.result.cancelled) {
+        msg.textContent = `Готово: книга «${name}» добавлена в список.`;
+        loadBooks();
+        if (typeof refreshDbBanner === "function") refreshDbBanner();
+      } else if (job.status === "error") { msg.textContent = ""; abShow("form"); abError("Индексация не удалась: " + (job.error || "неизвестная ошибка")); $("#ab-start").classList.remove("hidden"); }
+      else msg.textContent = "Индексация отменена, книга не добавлена.";
+    });
+  } catch (e) { abError(e.message); }
+});
+
+$("#ab-cancel-job").addEventListener("click", async () => {
+  if (!AB.jobId) return;
+  ABB.stop = true;   // a batch stops after the current book
+  try { await api(`/api/jobs/${AB.jobId}/cancel`, { method: "POST" }); $("#ab-step-progress .msg").textContent = "Отмена… дождитесь остановки."; }
+  catch (e) { abError("Не удалось отменить: " + e.message); }
+});
+
+// ---- several books at once: upload all, edit names/IDs in a list, then index them one after another ----
+const ABB = { items: [], running: false, stop: false };   // item: {fileName, file, title, id, info, status, jobId}
+
+function abHandleFiles(files) {
+  const list = [...files];
+  if (!list.length) return;
+  if (list.length === 1) { abUpload(list[0]); return; }
+  abBatchUpload(list);
+}
+
+function abUniqueId(id) {
+  const taken = new Set([...booksData.books.map((b) => b.book_id), ...ABB.items.map((x) => x.id)]);
+  if (!taken.has(id)) return id;
+  let n = 2;
+  while (taken.has(`${id}_${n}`)) n++;
+  return `${id}_${n}`;
+}
+
+async function abBatchUpload(files) {
+  abError("");
+  ABB.items = []; ABB.stop = false;
+  abShow("batch");
+  $("#ab-start").classList.add("hidden");
+  const bad = files.filter((f) => !/\.(epub|fb2|fb2\.zip|json|md)$/i.test(f.name));
+  for (const f of files) {
+    if (bad.includes(f)) continue;
+    const it = { fileName: f.name, file: null, title: "", id: "", info: "Загружаю…", status: "wait" };
+    ABB.items.push(it);
+    abBatchRender();
+    try {
+      const meta = await api(`/api/books/upload?filename=${encodeURIComponent(f.name)}`, {
+        method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: f,
+      });
+      if (meta.duplicate_of) {
+        const d = meta.duplicate_of;
+        it.status = "dup"; it.title = d.book_name;
+        it.info = `Эта книга уже есть в библиотеке: «${d.book_name}» (${d.reason}) — пропускаю.`;
+        abBatchRender();
+        continue;
+      }
+      const normT = (s) => (s || "").toLowerCase().replace(/ё/g, "е").replace(/[^\p{L}\p{N}]+/gu, " ").trim();   // \W is ASCII-only in JS: Cyrillic must be kept
+      const twin = meta.title && ABB.items.find((x) => x !== it && x.file && normT(x.title) === normT(meta.title));
+      if (twin) {
+        it.status = "dup"; it.title = meta.title;
+        it.info = `Эта книга уже есть в списке выше («${twin.fileName}») — пропускаю.`;
+        abBatchRender();
+        continue;
+      }
+      it.file = meta.file; it.title = meta.title || f.name.replace(/\.[^.]+$/, "");
+      it.id = ""; it.id = abUniqueId(meta.book_id || "book");
+      it.info = [meta.author, "читаю…"].filter(Boolean).join(" · ");
+      abBatchRender();
+      try {
+        const p = await api(`/api/books/preview?file=${encodeURIComponent(meta.file)}`);
+        it.info = [meta.author, `глав: ${p.chapters}, абзацев: ${p.paragraphs.toLocaleString("ru-RU")}`].filter(Boolean).join(" · ");
+        if (p.trial) it.info += " · ⚠ это ознакомительный фрагмент, а не вся книга (можно убрать ✕)";
+      } catch (e) { it.info = "не удалось прочитать: " + e.message; it.status = "bad"; }
+    } catch (e) { it.info = "не загрузилась: " + e.message; it.status = "bad"; }
+    abBatchRender();
+  }
+  const notes = [];
+  if (bad.length) notes.push(`Пропущены файлы неподходящего формата: ${bad.map((f) => f.name).join(", ")}.`);
+  const dups = ABB.items.filter((x) => x.status === "dup");
+  if (dups.length) notes.push(`Пропущены повторы (книга уже есть): ${dups.map((x) => `«${x.title}»`).join(", ")}.`);
+  if (notes.length) abError(notes.join(" "));
+  abBatchRender();
+}
+
+const AB_STATUS = { wait: "", bad: "✖ ошибка", dup: "↺ уже есть", queued: "в очереди", run: "⏳ индексируется…", done: "✔ готово", fail: "✖ не удалось", cancel: "отменено" };
+
+function abBatchRender() {
+  const box = $("#ab-batch-list");
+  box.innerHTML = ABB.items.map((it, i) => `
+    <div class="abb-row abb-${it.status}" data-i="${i}">
+      <div class="abb-file" title="${escapeHtml(it.fileName)}">${escapeHtml(it.fileName)}</div>
+      <input class="abb-title" type="text" value="${escapeHtml(it.title)}" placeholder="Название" ${ABB.running || !it.file ? "disabled" : ""} />
+      <input class="abb-id" type="text" value="${escapeHtml(it.id)}" placeholder="ID" spellcheck="false" ${ABB.running || !it.file ? "disabled" : ""} />
+      <button type="button" class="bm-btn abb-del" title="Убрать из списка" ${ABB.running ? "disabled" : ""}>✕</button>
+      <div class="abb-info">${escapeHtml(it.info)} <b class="abb-status">${AB_STATUS[it.status] || ""}</b></div>
+    </div>`).join("");
+  box.querySelectorAll(".abb-row").forEach((row) => {
+    const it = ABB.items[Number(row.dataset.i)];
+    row.querySelector(".abb-title").addEventListener("input", (e) => { it.title = e.target.value; });
+    row.querySelector(".abb-id").addEventListener("input", (e) => { it.id = e.target.value.trim(); });
+    row.querySelector(".abb-del").addEventListener("click", () => { ABB.items.splice(Number(row.dataset.i), 1); abBatchRender(); });
+  });
+  const ready = ABB.items.filter((x) => x.file && !["bad", "dup", "done"].includes(x.status));
+  const btn = $("#ab-start-all");
+  btn.textContent = `Добавить и проиндексировать все (${ready.length})`;
+  btn.classList.toggle("hidden", ABB.running || !ready.length);
+  $("#ab-cancel-job").classList.toggle("hidden", !ABB.running);
+  $("#ab-close").textContent = ABB.running ? "Свернуть" : (ABB.items.some((x) => x.status === "done") ? "Закрыть" : "Отмена");
+}
+
+// Overall progress of a batch: «Книга 2 из 5», bar = finished books + the share of the current one.
+function abBatchTotal(curFrac = 0) {
+  const todo = ABB.items.filter((x) => ["queued", "run", "done", "fail", "cancel"].includes(x.status) && x.batch);
+  const box = $("#ab-batch-total");
+  if (!todo.length) { box.classList.add("hidden"); return; }
+  const finished = todo.filter((x) => ["done", "fail", "cancel"].includes(x.status)).length;
+  const cur = todo.find((x) => x.status === "run");
+  box.classList.remove("hidden");
+  box.querySelector(".abb-total-line").innerHTML = cur
+    ? `Книга <b>${finished + 1}</b> из <b>${todo.length}</b>: «${escapeHtml(cur.title)}»`
+    : `Обработано книг: <b>${finished}</b> из <b>${todo.length}</b>`;
+  box.querySelector(".abb-total-bar").style.width = `${Math.round(100 * (finished + (cur ? curFrac : 0)) / todo.length)}%`;
+}
+
+function abWaitJob(jobId) {
+  const panel = $("#ab-step-progress .status-panel");
+  // follow the current book's own bar to move the overall one smoothly
+  const watch = setInterval(() => {
+    const w = parseFloat(panel.querySelector(".progress-bar-inner").style.width) || 0;
+    abBatchTotal(Math.min(1, w / 100));
+  }, 500);
+  return new Promise((resolve) => pollJob(jobId, panel, (job) => { clearInterval(watch); resolve(job); }));
+}
+
+$("#ab-start-all").addEventListener("click", async () => {
+  abError("");
+  const todo = ABB.items.filter((x) => x.file && !["bad", "dup", "done"].includes(x.status));
+  const ids = new Set();
+  for (const it of todo) {
+    if (!it.title.trim()) { abError(`Укажите название для «${it.fileName}».`); return; }
+    if (!/^[A-Za-z0-9_.-]+$/.test(it.id)) { abError(`ID «${it.id}» (${it.fileName}): только латинские буквы, цифры, «_», «-» и «.».`); return; }
+    if (ids.has(it.id)) { abError(`ID «${it.id}» повторяется в списке.`); return; }
+    ids.add(it.id);
+  }
+  const clash = todo.filter((it) => booksData.books.some((b) => b.book_id === it.id));
+  if (clash.length && !confirm(`Книги с такими ID уже есть: ${clash.map((x) => x.id).join(", ")}.\nИх базы будут заменены. Продолжить?`)) return;
+  const setup = abEmbedSetup();
+  let settings = {};
+  try { settings = await api("/api/settings"); } catch (e) {}
+  ABB.running = true; ABB.stop = false;
+  ABB.items.forEach((it) => { it.batch = false; });
+  todo.forEach((it) => { it.status = "queued"; it.batch = true; });
+  $("#ab-step-progress").classList.remove("hidden");
+  abBatchRender();
+  for (const it of todo) {
+    if (ABB.stop) { it.status = "cancel"; continue; }
+    it.status = "run"; abBatchRender(); abBatchTotal(0);
+    try {
+      const { job_id } = await api("/api/jobs/index", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ json_path: it.file, book_id: it.id, book_name: it.title.trim(), ...setup, device: settings.device || "auto", embed_batch_size: 32 }),
+      });
+      it.jobId = AB.jobId = job_id;
+      const job = await abWaitJob(job_id);
+      if (job.status === "done" && job.result && !job.result.cancelled) it.status = "done";
+      else if (job.status === "error") { it.status = "fail"; it.info += " · " + (job.error || "ошибка"); }
+      else { it.status = "cancel"; ABB.stop = true; }
+    } catch (e) { it.status = "fail"; it.info += " · " + e.message; }
+    await loadBooks();
+    abBatchRender();
+  }
+  ABB.running = false; AB.jobId = null;
+  const done = ABB.items.filter((x) => x.status === "done").length;
+  $("#ab-step-progress .msg").textContent = `Готово: добавлено книг — ${done} из ${todo.length}.`;
+  abBatchTotal();
+  abBatchRender();
+  if (typeof refreshDbBanner === "function") refreshDbBanner();
+});
 
 
 // Red banner when the active book database is missing/corrupted (clear message instead of silent failures).
@@ -1000,22 +1525,39 @@ function dayLabel(iso) {
   return `${pad2(d.getDate())}.${pad2(d.getMonth() + 1)}.${d.getFullYear()}`;
 }
 
-function openHistoryPanel() {
+// History lives in a left sidebar (rail + panel) on the Search tab. Whether it is open is remembered
+// between launches; leaving the Search tab or a narrow-screen auto-close hides it without changing that.
+const HISTORY_OPEN_KEY = "history_open";
+function historyPref() { try { return localStorage.getItem(HISTORY_OPEN_KEY) === "1"; } catch (e) { return false; } }
+function saveHistoryPref(open) { try { localStorage.setItem(HISTORY_OPEN_KEY, open ? "1" : "0"); } catch (e) {} }
+
+function openHistoryPanel(remember = true) {
   historyOpen = true;
+  if (remember) saveHistoryPref(true);
   $("#history-panel").classList.remove("hidden");
   document.body.classList.add("history-open");
+  $("#history-rail").setAttribute("aria-expanded", "true");
   loadHistory();
 }
-function closeHistory() {
+function closeHistory(remember = true) {
   historyOpen = false;
+  if (remember) saveHistoryPref(false);
   $("#history-panel").classList.add("hidden");
   document.body.classList.remove("history-open");
+  $("#history-rail").setAttribute("aria-expanded", "false");
   $("#history-clear-confirm").classList.add("hidden");
 }
-$("#history-btn").addEventListener("click", () => (historyOpen ? closeHistory() : openHistoryPanel()));
-$("#history-close").addEventListener("click", closeHistory);
+$("#history-rail").addEventListener("click", () => (historyOpen ? closeHistory() : openHistoryPanel()));
+$("#history-close").addEventListener("click", () => closeHistory());
 document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && historyOpen) closeHistory(); });
-$$(".tab-btn[data-tab]").forEach((b) => b.addEventListener("click", () => { if (b.dataset.tab !== "search") closeHistory(); }));
+$$(".tab-btn[data-tab]").forEach((b) => b.addEventListener("click", () => {
+  const onSearch = b.dataset.tab === "search";
+  document.body.classList.toggle("search-tab", onSearch);
+  if (!onSearch) closeHistory(false);
+  else if (historyPref() && !historyOpen) openHistoryPanel(false);
+}));
+document.body.classList.add("search-tab");
+if (historyPref()) openHistoryPanel(false);
 
 async function loadHistory() {
   const list = $("#history-list");
@@ -1077,8 +1619,24 @@ function renderHistoryList(items, total) {
     row.addEventListener("click", (ev) => { if (!ev.target.closest(".h-btns")) openHistoryEntry(id); });
     row.addEventListener("keydown", (ev) => { if (ev.key === "Enter") openHistoryEntry(id); });
     row.querySelector(".h-pin").addEventListener("click", () => toggleHistoryPin(id));
-    row.querySelector(".h-del").addEventListener("click", () => deleteHistoryEntry(id));
+    row.querySelector(".h-del").addEventListener("click", () => askDeleteHistoryEntry(row, id));
   });
+}
+
+// Deleting one entry: inline two-step confirmation under the row (same style as «Очистить историю»).
+function askDeleteHistoryEntry(row, id) {
+  const open = row.nextElementSibling && row.nextElementSibling.classList.contains("h-del-confirm");
+  $$("#history-list .h-del-confirm").forEach((b) => b.remove());
+  if (open) return;  // second click on ✕ just closes the question
+  const pinned = row.querySelector(".h-pin.on");
+  row.insertAdjacentHTML("afterend", `<div class="confirm-bar h-del-confirm">
+    <span>Удалить эту запись${pinned ? " (она закреплена)" : ""}? Отменить будет нельзя.</span>
+    <button type="button" class="small h-del-yes">Да, удалить</button>
+    <button type="button" class="secondary small h-del-no">Отмена</button></div>`);
+  const bar = row.nextElementSibling;
+  bar.querySelector(".h-del-yes").addEventListener("click", () => { bar.remove(); deleteHistoryEntry(id); });
+  bar.querySelector(".h-del-no").addEventListener("click", () => bar.remove());
+  bar.querySelector(".h-del-yes").focus();
 }
 
 async function toggleHistoryPin(id) {
@@ -1127,6 +1685,7 @@ function applyEntryToForm(e) {
   const sel = $("#qmode-select");
   const m = e.mode === "rag" && e.params && e.params.overview ? "overview" : e.mode;
   if ([...sel.options].some((o) => o.value === m)) { sel.value = m; sel.dispatchEvent(new Event("change")); }
+  if (e.params && Array.isArray(e.params.book_ids) && e.params.book_ids.length) setSelectedBooks(e.params.book_ids);
   if (e.mode === "search" && e.params && e.params.mode) {
     const sm = $$('input[name="smode"]').find((r) => r.value === e.params.mode);
     if (sm) sm.checked = true;
@@ -1146,7 +1705,7 @@ async function openHistoryEntry(id) {
     updateHistoryNote();
     renderHistoryExtra(e);
     document.querySelectorAll(".h-row").forEach((r) => r.classList.toggle("active", Number(r.dataset.id) === id));
-    if (window.innerWidth < 1200) closeHistory();  // on narrow screens the drawer would cover the result
+    if (window.innerWidth < 1200) closeHistory(false);  // on narrow screens the drawer would cover the result
     window.scrollTo({ top: 0, behavior: "smooth" });
   } catch (err) {
     console.error("open history entry:", err);
@@ -1210,13 +1769,55 @@ function afterQuery() {
 loadRecent();
 
 // Back from the reading page: «Поиск» there links to /#q=<query>; put the query back into the box.
-(function restoreQueryFromHash() {
+// The whole search page view (query, mode, shown result/answer, scroll position) is kept in sessionStorage
+// when leaving the page (e.g. for «Чтение») and put back on return, so the user lands where they were.
+const VIEW_KEY = "search_view";
+let viewReady = false;   // don't overwrite the saved view before it has been restored
+function saveView() {
+  if (!viewReady) return;
+  try {
+    sessionStorage.setItem(VIEW_KEY, JSON.stringify({
+      q: $("#query-input").value, qmode: $("#qmode-select").value,
+      html: $("#results").innerHTML, scrollY: window.scrollY,
+      items: lastSearchItems, badges: badgeBooks, historyId: currentHistoryEntry ? currentHistoryEntry.id : null,
+    }));
+  } catch (e) { /* storage full / unavailable: nothing to restore later */ }
+}
+// Saved while scrolling and before following a link too: in the desktop window (WebView2) «pagehide» is not reliable.
+let viewTimer = null;
+window.addEventListener("scroll", () => { clearTimeout(viewTimer); viewTimer = setTimeout(saveView, 250); }, { passive: true });
+document.addEventListener("click", (e) => { if (e.target.closest("a[href]")) saveView(); }, true);
+window.addEventListener("pagehide", saveView);
+document.addEventListener("visibilitychange", saveView);
+(function restoreView() {
   const q = new URLSearchParams(location.hash.slice(1)).get("q");
-  if (q) {
-    $("#query-input").value = q;
-    autosizeQuery();
-    history.replaceState(null, "", location.pathname);
+  if (q) history.replaceState(null, "", location.pathname);
+  let v = null;
+  try { v = JSON.parse(sessionStorage.getItem(VIEW_KEY) || "null"); } catch (e) {}
+  if (v && (!q || v.q === q)) {
+    $("#query-input").value = v.q || "";
+    if (v.qmode && $("#qmode-select").value !== v.qmode) {
+      $("#qmode-select").value = v.qmode;
+      $("#qmode-select").dispatchEvent(new Event("change"));
+    }
+    const results = $("#results");
+    results.innerHTML = v.html || "";
+    lastSearchItems = v.items || null;
+    badgeBooks = !!v.badges;
+    bindCardHandlers(results);
+    results.querySelectorAll(".cite").forEach((el) => el.addEventListener("click", () => jumpToSource(el.dataset.id)));
+    // restore the scroll once layout settles (fonts, the books list, etc.)
+    const y = v.scrollY || 0, t0 = Date.now();
+    (function tick() {   // retry while the page is still growing, up to ~3 s
+      window.scrollTo(0, y);
+      if (Math.abs(window.scrollY - y) < 4 || Date.now() - t0 > 3000) { viewReady = true; return; }
+      setTimeout(tick, 100);
+    })();
+  } else {
+    if (q) $("#query-input").value = q;
+    viewReady = true;
   }
+  autosizeQuery();
 })();
 
 try { const bad = Md.selfTest(); if (bad.length) console.warn("[md.js] self-test failed:", bad); } catch (e) { console.warn("[md.js]", e); }

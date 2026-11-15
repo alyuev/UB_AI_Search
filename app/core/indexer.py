@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from app.config import DATA_DIR
-from app.core.db import SCHEMA_SQL, check_integrity, quantize_vector
+from app.core.db import SCHEMA_SQL, check_integrity, encode_fmt, quantize_vector
 from app.core.embedder import Embedder, create_embedder
-from app.core.parser import parse_json
+from app.core.parser import load_book
 from app.log import get_logger
 
 logger = get_logger("index")
@@ -75,7 +75,11 @@ def _load_titles(titles_path: Optional[Path], conn: sqlite3.Connection) -> None:
 
     with open(titles_path, "r", encoding="utf-8") as f:
         data = json.load(f)
+    _apply_titles(data, conn)
 
+
+def _apply_titles(data: dict, conn: sqlite3.Connection) -> None:
+    """Write a titles dict (same layout as the titles JSON) into parts/papers/sections."""
     for part in data.get("parts", []) or []:
         papers_range = part.get("papers") or [None, None]
         first_p, last_p = (papers_range + [None, None])[:2]
@@ -208,8 +212,13 @@ def build_index(
     runtime: str = "auto",
     vector_dtype: str = "int8",
 ) -> Path:
-    """Parse json_path, build a fresh SQLite db with FTS + embeddings, and
-    atomically move it into place at db_path. Returns db_path.
+    """Parse the source file (`json_path`: bilingual .json/.md corpus, or a monolingual .epub /
+    .fb2 / .fb2.zip book), build a fresh SQLite db with FTS + embeddings, and atomically move it
+    into place at db_path. Returns db_path.
+
+    Monolingual books keep their text in ONE of the en/ru fields (the other is ""): only that
+    language is lemmatized/embedded, and the book's own chapter/section titles are stored (unless
+    `titles_path` is given explicitly).
 
     `lower_priority` (default True): drop this process's OS scheduling
     priority to BELOW_NORMAL (Windows) while indexing runs, so a long CPU
@@ -233,10 +242,10 @@ def build_index(
     if lower_priority:
         _lower_process_priority()
 
-    if titles_path is None:
+    if titles_path is None and json_path.suffix.lower() in (".json", ".md"):
         default_titles = DATA_DIR / "titles" / f"{book_id}_titles.json"
         titles_path = default_titles if default_titles.exists() else None
-    else:
+    elif titles_path is not None:
         titles_path = Path(titles_path)
 
     t0 = time.time()
@@ -256,8 +265,9 @@ def build_index(
         conn.executescript(SCHEMA_SQL)
 
         # --- stage: parsing ---
-        progress("parsing", 0, 0, None, "parsing source JSON")
-        records = list(parse_json(json_path))
+        progress("parsing", 0, 0, None, f"parsing {json_path.name}")
+        book = load_book(json_path)
+        records = book.records
         total = len(records)
         progress("parsing", total, total, None, f"parsed {total} paragraphs")
         if cancel.is_set():
@@ -267,11 +277,11 @@ def build_index(
         progress("database", 0, total, None, "inserting paragraphs")
         for i, rec in enumerate(records):
             conn.execute(
-                "INSERT INTO paragraphs (id, book_id, seq, paper, section, paragraph, en, ru) "
-                "VALUES (?,?,?,?,?,?,?,?)",
+                "INSERT INTO paragraphs (id, book_id, seq, paper, section, paragraph, en, ru, fmt) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
                 (
                     rec["id"], book_id, i, rec["paper"], rec["section"], rec["paragraph"],
-                    rec["en"], rec["ru"],
+                    rec["en"], rec["ru"], encode_fmt(rec.get("fmt")),
                 ),
             )
             if i % 2000 == 0:
@@ -301,6 +311,8 @@ def build_index(
         # --- stage: fts (titles must be loaded first: they are indexed too) ---
         progress("fts", 0, total, None, "building full-text index")
         _load_titles(titles_path, conn)
+        if titles_path is None and book.titles:
+            _apply_titles(book.titles, conn)   # titles taken from the book itself (epub/fb2)
         rows = _fts_rows(conn, morph)
         conn.executemany(
             "INSERT INTO paragraphs_fts (id, en, ru, ru_lemma, title_en, title_ru) "
@@ -311,7 +323,10 @@ def build_index(
         progress("fts", total, total, None, "fts index built")
 
         # --- glossary of terms RU<->EN (optional bonus; a failure must not break the build) ---
+        bilingual = any((r["en"] or "").strip() for r in records) and any((r["ru"] or "").strip() for r in records)
         try:
+            if not bilingual:
+                raise RuntimeError("single-language book: no RU<->EN glossary")  # logged below
             from app.core.terms import build_glossary
 
             ginfo = build_glossary(
@@ -321,7 +336,7 @@ def build_index(
         except RuntimeError as exc:
             if str(exc) == "cancelled":
                 raise
-            logger.warning("glossary skipped: %s", exc)
+            (logger.info if not bilingual else logger.warning)("glossary skipped: %s", exc)
         except Exception as exc:  # noqa: BLE001
             logger.warning("glossary skipped: %s", exc)
         if cancel.is_set():
@@ -332,17 +347,21 @@ def build_index(
         embedder = create_embedder(
             model_name, runtime=runtime, device=device, intra_op_threads=intra_op_threads
         )
-        ids_ordered = [r["id"] for r in records]
-        en_texts = [r["en"] for r in records]
-        ru_texts = [r["ru"] for r in records]
+        # Only non-empty texts are embedded (a monolingual book has one empty language field).
+        by_lang = {
+            lang: [(r["id"], r[lang]) for r in records if (r[lang] or "").strip()]
+            for lang in ("en", "ru")
+        }
+        emb_total = sum(len(v) for v in by_lang.values())
+        emb_done = 0
 
-        for lang, texts in (("en", en_texts), ("ru", ru_texts)):
+        for lang, pairs in by_lang.items():
             done = 0
-            for start in range(0, total, embed_batch_size):
+            for start in range(0, len(pairs), embed_batch_size):
                 if cancel.is_set():
                     raise RuntimeError("cancelled")
-                batch_ids = ids_ordered[start : start + embed_batch_size]
-                batch_texts = texts[start : start + embed_batch_size]
+                batch_ids = [p[0] for p in pairs[start : start + embed_batch_size]]
+                batch_texts = [p[1] for p in pairs[start : start + embed_batch_size]]
                 vecs = embedder.embed_passages(batch_texts, batch_size=embed_batch_size)
                 if vector_dtype == "int8":
                     rows = []
@@ -359,21 +378,25 @@ def build_index(
                     rows,
                 )
                 done += len(batch_ids)
-                current = done if lang == "en" else total + done
-                progress("embedding", current, total * 2, batch_ids[-1], f"embedding {lang}")
+                emb_done += len(batch_ids)
+                progress("embedding", emb_done, emb_total, batch_ids[-1], f"embedding {lang}")
             conn.commit()
-        progress("embedding", total * 2, total * 2, None, "embedding done")
+        progress("embedding", emb_total, emb_total, None, "embedding done")
 
         # --- stage: finalize ---
         progress("finalize", 0, 1, None, "writing book metadata")
         import datetime
 
+        if bilingual or book.lang is None:
+            lang_src, lang_tr = "en", "ru"
+        else:
+            lang_src, lang_tr = book.lang, ""   # monolingual: the language of the text, no translation
         conn.execute(
             "INSERT OR REPLACE INTO books (book_id, book_name, language_source, "
             "language_translation, source_file, created_at, embedding_model, embedding_dim, "
             "index_scheme, embedding_runtime, vector_dtype) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (
-                book_id, book_name, "en", "ru", str(json_path),
+                book_id, book_name, lang_src, lang_tr, str(json_path),
                 datetime.datetime.utcnow().isoformat(), model_name, embedder.dim, scheme,
                 getattr(embedder, "runtime", "onnx"),
                 "i8" if vector_dtype == "int8" else "f32",

@@ -267,6 +267,10 @@ class Searcher:
                 ru_mat[i] = by_lang["ru"][pid]
         self._en_mat = en_mat
         self._ru_mat = ru_mat
+        # Which paragraphs have a vector per language (a monolingual book has one empty language):
+        # rows without one must not take part in max()/argmax over the two similarities.
+        self._en_has = np.fromiter((pid in by_lang.get("en", {}) for pid in ids), dtype=bool, count=len(ids))
+        self._ru_has = np.fromiter((pid in by_lang.get("ru", {}) for pid in ids), dtype=bool, count=len(ids))
         self._id_to_idx = {pid: i for i, pid in enumerate(ids)}
         logger.info(
             "loaded %d vectors (dim=%d, %d int8-dequantized) in %.2fs",
@@ -413,8 +417,8 @@ class Searcher:
             return []
 
         qvec = self.embedder.embed_query(query)
-        sim_en = self._en_mat @ qvec
-        sim_ru = self._ru_mat @ qvec
+        sim_en = np.where(self._en_has, self._en_mat @ qvec, -2.0)
+        sim_ru = np.where(self._ru_has, self._ru_mat @ qvec, -2.0)
         sim = np.maximum(sim_en, sim_ru)
         match_lang = np.where(sim_en >= sim_ru, "en", "ru")
 

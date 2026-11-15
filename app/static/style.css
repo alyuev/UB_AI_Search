@@ -89,7 +89,9 @@ button, input, select, textarea { font-family: inherit; }
   content: "✦"; width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
   background: linear-gradient(135deg, #3d5afe, #7c4dff); color: #fff; font-size: 15px;
 }
-.tabs { display: flex; gap: 2px; flex: 1; overflow-x: auto; }
+.tabs { display: flex; align-items: center; gap: 2px; flex: 1; overflow-x: auto; }
+.tabs-spacer { flex: 1; min-width: 12px; }
+.tabs .book-picker { margin-right: 10px; }
 .tab-btn {
   background: none; border: none; padding: 7px 12px; border-radius: 9px;
   color: var(--text-muted); cursor: pointer; font-size: 14px; white-space: nowrap;
@@ -293,8 +295,16 @@ details.other-sources > .card { margin-bottom: 12px; }
 .check-label input { margin-top: 3px; }
 
 /* ---- History drawer ---- */
-.history-panel { position: fixed; top: 58px; right: 0; bottom: 0; width: 390px; max-width: 100vw; z-index: 20;
-  background: var(--bg-card); border-left: 1px solid var(--border); box-shadow: -6px 0 20px rgba(0,0,0,.12);
+.history-rail { position: fixed; top: var(--topbar-h, 56px); left: 0; bottom: 0; width: 36px; z-index: 21;
+  display: none; flex-direction: column; align-items: center; gap: 10px; padding: 14px 0; margin: 0;
+  background: var(--surface-2); border: 0; border-right: 1px solid var(--border); border-radius: 0;
+  color: var(--text-muted); cursor: pointer; font-size: 13px; }
+.history-rail:hover, .history-rail[aria-expanded="true"] { color: var(--text); background: var(--bg-card); }
+.history-rail .rail-text { writing-mode: vertical-rl; transform: rotate(180deg); letter-spacing: .04em; }
+body.search-tab .history-rail { display: flex; }
+@media (min-width: 761px) { body.search-tab main { padding-left: 60px; } }
+.history-panel { position: fixed; top: var(--topbar-h, 56px); left: 36px; bottom: 0; width: 390px; max-width: calc(100vw - 36px); z-index: 20;
+  background: var(--bg-card); border-right: 1px solid var(--border); box-shadow: 6px 0 20px rgba(0,0,0,.12);
   display: flex; flex-direction: column; padding: 12px; gap: 10px; }
 .history-panel.hidden { display: none; }
 .history-head { display: flex; align-items: center; justify-content: space-between; font-size: 16px; }
@@ -325,7 +335,7 @@ details.other-sources > .card { margin-bottom: 12px; }
 .history-note.hidden { display: none; }
 .history-note.error { background: color-mix(in srgb, var(--err) 14%, var(--bg-card)); border-color: var(--err); color: var(--err); }
 .h-note-btns { display: flex; gap: 8px; }
-@media (min-width: 1200px) { body.history-open main { margin-right: 400px; } }
+@media (min-width: 1200px) { body.history-open main { margin-left: 426px; } }
 
 /* ---- labelled inference block in RAG answers ---- */
 .rag-answer .inference-box { border: 2px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft);
@@ -651,3 +661,86 @@ button.danger-ish { background: var(--warn); border-color: var(--warn); color: #
 .flow .fcol { display: flex; flex-direction: column; gap: 6px; }
 .guide-table { border-collapse: collapse; width: 100%; }
 .guide-table td { border: 1px solid var(--border); padding: 6px 10px; }
+
+/* ------------------------------------------------ books: selection menu, «+», add dialog --- */
+.book-picker { position: relative; margin-right: 10px; }
+.book-picker-btn { padding: 5px 10px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; font-size: 13px; cursor: pointer; max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.book-picker-btn b { font-weight: 600; }
+.add-book-btn { font-size: 18px; line-height: 1; width: 28px; height: 28px; margin-left: 4px; }
+.books-menu { position: fixed; z-index: 60; /* fixed: the tab bar scrolls and would clip it */ min-width: 360px; max-width: 92vw; padding: 8px; background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 8px 28px rgba(0,0,0,.22); font-size: 14px; }
+.books-menu.hidden { display: none; }
+.bm-row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; }
+.bm-row:hover { background: var(--accent-soft); }
+.bm-row label { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; cursor: pointer; }
+.bm-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bm-meta { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.bm-all { border-bottom: 1px solid var(--border); margin-bottom: 4px; padding-bottom: 8px; font-weight: 600; }
+.bm-btn { border: 0; background: transparent; cursor: pointer; font-size: 15px; padding: 2px 5px; color: var(--text-muted); border-radius: 6px; }
+.bm-btn:hover { background: var(--bg); color: var(--text); }
+.bm-main { color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap; padding: 2px 5px; }
+.bm-foot { font-size: 12px; color: var(--text-muted); padding: 6px 6px 2px; }
+.card.book-tinted { border-left: 4px solid var(--bk); }
+.card.book-tinted .book-badge { background: color-mix(in srgb, var(--bk) 15%, transparent); color: var(--bk); }
+.bm-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+.book-badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card-langs.mono { grid-template-columns: 1fr; }
+.card-langs.mono > div { padding: 0; border: 0; }
+.card > .card-langs.mono > div::before { display: none; }
+
+.add-book-dialog { width: min(560px, 94vw); padding: 0; border: 1px solid var(--border); border-radius: 12px; background: var(--bg-card); color: var(--text); }
+.add-book-dialog::backdrop { background: rgba(0,0,0,.45); }
+.ab-form { padding: 20px 22px; display: flex; flex-direction: column; gap: 12px; }
+.ab-form h2 { margin: 0 0 4px; font-size: 18px; }
+.ab-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--text-muted); }
+.ab-form input[type=text] { padding: 8px 10px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; font-size: 15px; }
+.ab-drop { align-items: center; text-align: center; padding: 28px 16px; border: 2px dashed var(--border); border-radius: 12px; cursor: pointer; line-height: 1.6; color: var(--text); }
+.ab-drop small { color: var(--text-muted); }
+.ab-drop:hover, .ab-drop.drag { border-color: var(--accent); background: var(--accent-soft); }
+.ab-msg { font-size: 13px; color: var(--text-muted); min-height: 1em; }
+.ab-msg.error { color: var(--err); }
+.ab-fileline { font-size: 13px; color: var(--text-muted); }
+.ab-preview { font-size: 14px; padding: 8px 10px; border-radius: var(--radius); background: var(--bg); border: 1px solid var(--border); }
+.ab-preview .sample { display: block; margin-top: 4px; font: 14px/1.5 var(--serif); color: var(--text-muted); }
+.ab-hint { font-size: 12px; color: var(--text-muted); }
+.ab-buttons { margin: 4px 0 0; justify-content: flex-end; }
+.ab-form .hidden, .add-book-dialog .hidden { display: none; }
+
+/* «О книге» */
+.bi-color-row { display: flex; align-items: center; gap: 12px; }
+.ab-form .bi-color-label { flex-direction: row; align-items: center; gap: 10px; }
+.bi-color-label input[type=color] { width: 44px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }
+.bi-facts dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 14px; margin: 0; font-size: 14px; }
+.bi-facts dt { color: var(--text-muted); }
+.bi-facts dd { margin: 0; overflow-wrap: anywhere; }
+.bi-facts code { font-size: 13px; }
+.bi-warn { color: var(--err); }
+
+/* «Добавить книгу»: several files */
+.add-book-dialog:has(#ab-step-batch:not(.hidden)) { width: min(820px, 96vw); }
+.abb-list { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; margin-top: 6px; }
+.abb-row { display: grid; grid-template-columns: 1fr 1.4fr 0.9fr auto; gap: 6px 8px; align-items: center; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius); }
+.abb-row input[type=text] { padding: 5px 8px; font-size: 14px; min-width: 0; }
+.abb-file { font-size: 13px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.abb-info { grid-column: 1 / -1; font-size: 12px; color: var(--text-muted); }
+.abb-done { border-color: var(--ok, #2e9e6a); }
+.abb-bad, .abb-fail { border-color: var(--err); }
+.abb-run { border-color: var(--accent); background: var(--accent-soft); }
+@media (max-width: 640px) { .abb-row { grid-template-columns: 1fr auto; } .abb-file { grid-column: 1 / -1; } }
+
+.abb-total { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: var(--radius); background: var(--accent-soft); }
+.abb-total-line { font-size: 14px; }
+.abb-total.hidden { display: none; }
+
+.ab-form h2 .ab-sub { font-size: 14px; font-weight: 400; color: var(--text-muted); }
+
+.abb-dup { opacity: .7; border-style: dashed; }
+
+.ab-trial { color: var(--err); font-weight: 600; margin-bottom: 4px; }
+
+/* books menu: fixed head (filter, «все»), scrolling list */
+.books-menu:not(.hidden) { display: flex; flex-direction: column; width: min(640px, 92vw); }
+.bm-head { flex: none; }
+#bm-filter { width: 100%; box-sizing: border-box; margin: 0 0 6px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font: inherit; }
+.bm-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.bm-foot { flex: none; border-top: 1px solid var(--border); margin-top: 4px; }
+.bm-empty { padding: 10px 6px; color: var(--text-muted); }

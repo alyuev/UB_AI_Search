@@ -202,3 +202,10 @@
   .toc-secs.opening { animation: none; }
   .toc-secs.closing { animation: none; display: none; }
 }
+
+/* one-language book: the empty language column disappears */
+.reader-page .read-text.only-ru .para, .reader-page .read-text.only-ru .read-h,
+.reader-page .read-text.only-en .para, .reader-page .read-text.only-en .read-h { grid-template-columns: minmax(0, 1fr); }
+.reader-page .read-text.only-ru .en, .reader-page .read-text.only-en .ru { display: none; }
+.reader-page .read-text.only-ru .para > div, .reader-page .read-text.only-ru .read-h > div,
+.reader-page .read-text.only-en .para > div, .reader-page .read-text.only-en .read-h > div { grid-column: 1 !important; grid-row: 1 !important; color: var(--text); }

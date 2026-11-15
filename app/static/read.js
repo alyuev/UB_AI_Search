@@ -133,8 +133,64 @@ function readHash() {
     section: h.has("s") ? Number(h.get("s")) : null,
     para: h.get("para") || null,
     q: h.get("q") || "",
+    book: h.get("b") || "",
   };
 }
+
+// Last reading place (address + scroll) is kept in localStorage on leaving the page; opening «Чтение»
+// without an address (the tab link) returns there. Links from search results carry their own address.
+const PLACE_KEY = "reader_place";
+let restoreScrollY = null;
+try {
+  const saved = JSON.parse(localStorage.getItem(PLACE_KEY) || "null");
+  // saved.hash may be "" (the default first document opened from the «Чтение» tab has no address)
+  if (saved && typeof saved.hash === "string") {
+    if (!location.hash && saved.hash) history.replaceState(null, "", location.pathname + saved.hash);
+    if (location.hash === saved.hash) restoreScrollY = saved;
+  }
+} catch (e) {}
+// Saved while scrolling too: in the desktop window (WebView2) «pagehide» is not reliable.
+let placeReady = false;   // don't overwrite the saved place with 0 before it has been restored
+function savePlace() {
+  if (!placeReady) return;
+  // remember the paragraph at the top of the screen (pixels drift while hyphenation reflows the text)
+  const top = parseFloat(getComputedStyle(document.body).getPropertyValue("--topbar")) || 0;
+  let anchor = null, offset = 0;
+  for (const el of document.querySelectorAll('[id^="para-"]')) {
+    const r = el.getBoundingClientRect();
+    if (r.bottom > top) { anchor = el.id; offset = r.top - top; break; }
+  }
+  try { localStorage.setItem(PLACE_KEY, JSON.stringify({ hash: location.hash, scrollY: window.scrollY, anchor, offset })); } catch (e) {}
+}
+let placeTimer = null;
+window.addEventListener("scroll", () => { clearTimeout(placeTimer); placeTimer = setTimeout(savePlace, 250); }, { passive: true });
+window.addEventListener("hashchange", () => setTimeout(savePlace, 500));
+window.addEventListener("pagehide", savePlace);
+document.addEventListener("visibilitychange", savePlace);
+
+// Return to the saved place: keep the remembered paragraph at the same spot under the top bar,
+// re-applying while the text still reflows (fonts, hyphenation) — about 2 s; pixel fallback.
+function scrollToWhenReady(saved, done) {
+  const t0 = Date.now();
+  let userMoved = false;   // stop as soon as the reader scrolls by themselves
+  const stop = () => { userMoved = true; };
+  ["wheel", "keydown", "touchstart", "mousedown"].forEach((ev) => window.addEventListener(ev, stop, { once: true, passive: true }));
+  (function tick() {
+    if (userMoved) { if (done) done(); return; }
+    const el = saved.anchor && document.getElementById(saved.anchor);
+    if (el) {
+      const top = parseFloat(getComputedStyle(document.body).getPropertyValue("--topbar")) || 0;
+      window.scrollBy(0, el.getBoundingClientRect().top - top - (saved.offset || 0));
+    } else window.scrollTo(0, saved.scrollY || 0);
+    if (Date.now() - t0 > 2000) { if (done) done(); return; }
+    setTimeout(tick, 150);
+  })();
+}
+
+// The book this page reads: «b» in the address (set by links from search results); empty = the active book.
+const BOOK = new URLSearchParams(location.hash.slice(1)).get("b") || "";
+if (BOOK) document.body.dataset.book = BOOK;
+const withBook = (path) => (BOOK ? path + (path.includes("?") ? "&" : "?") + "book_id=" + encodeURIComponent(BOOK) : path);
 
 function hashFor({ paper, section = null, para = null, q = state.q }) {
   const h = new URLSearchParams();
@@ -142,6 +198,7 @@ function hashFor({ paper, section = null, para = null, q = state.q }) {
   if (section != null) h.set("s", section);
   if (para) h.set("para", para);
   if (q) h.set("q", q);
+  if (BOOK) h.set("b", BOOK);
   return "#" + h.toString();
 }
 
@@ -232,8 +289,8 @@ function markText(text, set) {
 function paraHtml(p, marks) {
   return `<div class="para card-langs" data-id="${p.id}" id="para-${p.id}">
     <a class="pnum" href="${hashFor({ paper: p.paper, para: p.id })}" title="Ссылка на абзац ${p.id}"><span class="pn-full">${p.id}</span><span class="pn-seq">${p.n}</span></a>
-    <div class="ru" lang="ru">${markText(p.ru, marks.ru)}</div>
-    <div class="en" lang="en">${markText(p.en, marks.en)}</div>
+    <div class="ru" lang="ru">${RichText.render(p.ru, p.ru_html, (t) => markText(t, marks.ru))}</div>
+    <div class="en" lang="en">${RichText.render(p.en, p.en_html, (t) => markText(t, marks.en))}</div>
   </div>`;
 }
 
@@ -262,6 +319,10 @@ function renderText() {
     out.push(paraHtml(p, marks));
   }
   $("#text").innerHTML = out.join("");
+  // a one-language book: the empty language column is not shown, the text takes the whole width
+  const anyEn = d.paragraphs.some((p) => (p.en || "").trim()), anyRu = d.paragraphs.some((p) => (p.ru || "").trim());
+  $("#text").classList.toggle("only-ru", anyRu && !anyEn);
+  $("#text").classList.toggle("only-en", anyEn && !anyRu);
   document.title = `${(S.primary === "ru" ? d.title?.ru : d.title?.en) || `Документ ${d.paper}`} — Чтение`;
 
   const pos = state.flat.indexOf(d.paper);
@@ -300,7 +361,7 @@ async function onHash() {
   try {
     $("#read-msg").classList.add("hidden");
     if (paper !== state.paper || !state.data || state.data.q !== state.q) {
-      const d = await api(`/api/read/${paper}${state.q ? `?q=${encodeURIComponent(state.q)}` : ""}`);
+      const d = await api(withBook(`/api/read/${paper}${state.q ? `?q=${encodeURIComponent(state.q)}` : ""}`));
       d.q = state.q;
       state.data = d;
       state.paper = paper;
@@ -350,7 +411,7 @@ function syncTopbarHeight() {
   initToc();
   initNav();
   try {
-    const { parts } = await api("/api/toc");
+    const { parts } = await api(withBook("/api/toc"));
     state.toc = parts;
     state.flat = parts.flatMap((x) => x.papers.map((p) => p.paper));
   } catch (e) {
@@ -358,5 +419,7 @@ function syncTopbarHeight() {
     $("#read-msg").className = "msg-box error";
   }
   renderToc();
-  onHash();
+  await onHash();
+  if (restoreScrollY != null) scrollToWhenReady(restoreScrollY, () => { placeReady = true; });
+  else placeReady = true;
 })();
