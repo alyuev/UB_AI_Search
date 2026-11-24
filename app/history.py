@@ -71,11 +71,39 @@ def _row(r: sqlite3.Row, with_result: bool = False) -> dict:
         d["llm_model"] = r["llm_model"] or ""
     if "tps" in keys:
         d["tps"] = r["tps"]
+    if "q_json" in keys and r["mode"] == "rag":
+        qf = json.loads(r["q_json"]) if r["q_json"] else None
+        d["quality"] = quality_index(qf)
+        d["cited"] = (qf or {}).get("cited") or 0   # the UI compares answers to the same question by it
     if with_result:
         d["result"] = json.loads(r["result"]) if r["result"] else None
         d["experiment"] = json.loads(r["experiment"]) if r["experiment"] else None
         d["has_experiment"] = d["experiment"] is not None
     return d
+
+
+def quality_index(f: Optional[dict]) -> Optional[int]:
+    """Rough 0..100 "how well the answer is grounded in the book" score for a question (rag) entry.
+    It does NOT check whether the answer is right; it only rewards an answer that is complete,
+    cites found paragraphs and invents no references. None when nothing is known."""
+    if not f:
+        return None
+    if f.get("error") and not f.get("has_answer"):
+        return 0
+    if not f.get("has_answer"):
+        return 0
+    if f.get("no_answer"):
+        return 50                      # honest "the book has no answer": neutral
+    score = 100
+    cited = f.get("cited") or 0
+    if cited == 0:
+        score -= 45                    # nothing backed by sources
+    elif cited == 1:
+        score -= 15
+    score -= min(30, 10 * (f.get("unknown") or 0))   # references to paragraphs that were not found
+    if f.get("truncated"):
+        score -= 30
+    return max(0, min(100, score))
 
 
 def add(book_id: Optional[str], mode: str, query: str, params: Optional[dict], result: Optional[dict],
@@ -137,7 +165,14 @@ def list_entries(mode: Optional[str] = None, q: Optional[str] = None, book: Opti
             # the LLM that answered (a backup model if it took over), also for entries saved before this field
             "CASE WHEN json_valid(result) THEN COALESCE(json_extract(result, '$.answered_model'), "
             "json_extract(result, '$.provider.model')) END AS llm_model, "
-            "CASE WHEN json_valid(experiment) THEN json_extract(experiment, '$.stats.tokens_per_sec') END AS tps "
+            "CASE WHEN json_valid(experiment) THEN json_extract(experiment, '$.stats.tokens_per_sec') END AS tps, "
+            # just the fields the quality index needs (not the whole result)
+            "CASE WHEN mode = 'rag' AND json_valid(result) THEN json_object("
+            "'has_answer', COALESCE(length(json_extract(result, '$.answer')), 0) > 0, "
+            "'error', json_extract(result, '$.error'), 'no_answer', json_extract(result, '$.no_answer'), "
+            "'truncated', json_extract(result, '$.truncated'), "
+            "'cited', json_array_length(result, '$.cited_ids'), "
+            "'unknown', json_array_length(result, '$.unknown_citations')) END AS q_json "
             f"FROM history{clause} ORDER BY {order} LIMIT ? OFFSET ?",
             args + [max(1, min(limit, 500)), max(0, offset)]).fetchall()
         return {"items": [_row(r) for r in rows], "total": total}

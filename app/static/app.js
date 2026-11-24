@@ -454,7 +454,8 @@ function renderRagAnswer(result, errText) {
   const noCiteHtml = (!cited.length && !result.no_answer)
     ? `<div class="hint-warning">В ответе нет ссылок на найденные абзацы — относитесь к нему осторожно.</div>` : "";
 
-  let html = modelLineHtml(result) + noteHtml + `<div class="rag-answer${mdOn ? " md-on" : ""}">${renderAnswerHtml(result.answer || "")}</div>` + unknownHtml + noCiteHtml +
+  let html = `<div class="answer-tools"><button type="button" class="small secondary" id="copy-answer" title="Скопировать вопрос и ответ с форматированием — для вставки в Telegram, Teams, почту">📋 Копировать ответ</button></div>` +
+    modelLineHtml(result) + noteHtml + `<div class="rag-answer${mdOn ? " md-on" : ""}">${renderAnswerHtml(result.answer || "")}</div>` + unknownHtml + noCiteHtml +
     `<div class="card rag-meta">${planHtml}` +
     (ov ? "" : `<div class="stats-line">Найдено кандидатов: по словам ${result.candidates?.fts ?? "-"}, по смыслу ${result.candidates?.semantic ?? "-"}; передано модели абзацев: ${sources.length}</div>`) +
     (result.stats_summary ? `<div class="stats-line">${escapeHtml(result.stats_summary)}</div>` : "") + `</div>`;
@@ -470,6 +471,28 @@ function renderRagAnswer(result, errText) {
   results.innerHTML = html;
   bindCardHandlers(results);
   results.querySelectorAll(".cite").forEach((el) => el.addEventListener("click", () => jumpToSource(el.dataset.id)));
+  const cb = $("#copy-answer");
+  if (cb) cb.addEventListener("click", () => copyAnswer(results.querySelector(".rag-answer"), cb));
+}
+
+// Copy the answer for pasting into a chat: rich HTML (bold, lists survive in Teams/Telegram/mail) plus plain text.
+async function copyAnswer(el, btn) {
+  if (!el) return;
+  const q = ($("#query-input").value || "").trim();
+  const clone = el.cloneNode(true);
+  clone.querySelectorAll(".inference-label span").forEach((s) => s.remove());
+  const plain = (q ? `❓ ${q}\n\n` : "") + el.innerText.trim();
+  const html = (q ? `<p><b>❓ ${escapeHtml(q)}</b></p>` : "") + clone.innerHTML;
+  let ok = false;
+  try {
+    if (window.ClipboardItem && navigator.clipboard && navigator.clipboard.write) {
+      await navigator.clipboard.write([new ClipboardItem({
+        "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([plain], { type: "text/plain" }) })]);
+      ok = true;
+    }
+  } catch (e) { /* fall back to plain text */ }
+  if (!ok) { await copyText(plain, btn); return; }
+  const old = btn.textContent; btn.textContent = "Скопировано ✓"; setTimeout(() => { btn.textContent = old; }, 1500);
 }
 
 // free text of the translation report: Markdown (safe renderer) or plain escaped text
@@ -1510,6 +1533,10 @@ let recentQueries = [];   // [{query, mode}] newest first, unique by text
 let recentIdx = -1;       // position while cycling with the ↑ / ↓ keys
 let settingQuery = false; // true while the code (not the user) edits the query box
 let currentHistoryEntry = null;
+// the history entry shown last is remembered between launches and opened again at start
+const LAST_ENTRY_KEY = "history_last_entry";
+function rememberEntry(id) { try { if (id) localStorage.setItem(LAST_ENTRY_KEY, String(id)); else localStorage.removeItem(LAST_ENTRY_KEY); } catch (e) {} }
+function rememberedEntry() { try { return Number(localStorage.getItem(LAST_ENTRY_KEY)) || null; } catch (e) { return null; } }
 
 const pad2 = (n) => String(n).padStart(2, "0");
 function parseLocal(iso) { return new Date(iso); }
@@ -1530,6 +1557,24 @@ function dayLabel(iso) {
 const HISTORY_OPEN_KEY = "history_open";
 function historyPref() { try { return localStorage.getItem(HISTORY_OPEN_KEY) === "1"; } catch (e) { return false; } }
 function saveHistoryPref(open) { try { localStorage.setItem(HISTORY_OPEN_KEY, open ? "1" : "0"); } catch (e) {} }
+
+// The history filters (kind, rating, order/grouping) are remembered between launches.
+const HISTORY_FILTERS_KEY = "history_filters";
+const HISTORY_FILTER_IDS = ["history-mode", "history-rating", "history-sort"];
+(function restoreHistoryFilters() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(HISTORY_FILTERS_KEY) || "{}") || {}; } catch (e) {}
+  for (const id of HISTORY_FILTER_IDS) {
+    const sel = document.getElementById(id);
+    if (sel && saved[id] != null && [...sel.options].some((o) => o.value === saved[id])) sel.value = saved[id];
+    if (sel) sel.addEventListener("change", () => {
+      try {
+        localStorage.setItem(HISTORY_FILTERS_KEY, JSON.stringify(
+          Object.fromEntries(HISTORY_FILTER_IDS.map((i) => [i, document.getElementById(i).value]))));
+      } catch (e) {}
+    });
+  }
+})();
 
 function openHistoryPanel(remember = true) {
   historyOpen = true;
@@ -1566,7 +1611,7 @@ async function loadHistory() {
     if ($("#history-mode").value) p.set("mode", $("#history-mode").value);
     if ($("#history-q").value.trim()) p.set("q", $("#history-q").value.trim());
     if ($("#history-rating").value) p.set("rating", $("#history-rating").value);
-    if ($("#history-sort").value !== "date") p.set("sort", $("#history-sort").value);
+    if (!["date", "group"].includes($("#history-sort").value)) p.set("sort", $("#history-sort").value);
     const data = await api("/api/history?" + p.toString());
     renderHistoryList(data.items, data.total);
   } catch (e) {
@@ -1585,6 +1630,7 @@ function historyRow(e) {
     <div class="h-main">
       <div class="h-meta"><span class="h-mode">${MODE_ICON[e.mode] || ""} ${MODE_LABEL[e.mode] || e.mode}${e.params && e.params.overview ? " · обзор" : ""}<span class="h-rate" title="${e.note ? escapeHtml(e.note) : "оценка"}">${e.rating > 0 ? "👍" : e.rating < 0 ? "👎" : ""}${e.note ? " 📝" : ""}</span>${e.params && e.params.cloud ? `<span class="h-cloud" title="Облако: ${escapeHtml(e.params.provider || "")} — тексты отправлялись на внешний сервер">☁</span>` : ""}</span><span class="h-time">${fmtTime(e.created_at)}</span></div>
       <div class="h-query" title="${escapeHtml(e.query)}">${escapeHtml(e.query)}</div>
+      ${e.quality != null ? `<div class="h-model">${qualityBadge(e.quality_rel ?? e.quality, e.rel_note)}</div>` : ""}
       ${e.llm_model ? `<div class="h-model" title="Модель, которая отвечала">🤖 ${escapeHtml(e.llm_model)}</div>` : ""}
       ${e.duration_s || e.tps ? `<div class="h-model" title="Время выполнения запроса и скорость генерации ответа">⏱ ${e.duration_s ? fmtDuration(e.duration_s) : "—"}${e.tps ? ` · ${Number(e.tps).toFixed(1)} t/s` : ""}</div>` : ""}
       <div class="h-sum">${escapeHtml(e.summary || "")}</div>
@@ -1596,6 +1642,61 @@ function historyRow(e) {
   </div>`;
 }
 
+// Quality index (only for questions): how well the answer rests on the found paragraphs, 0..100.
+const QUALITY_TIP = "Индекс опоры на книгу (0–100): ответ полный, ссылается на найденные абзацы и не выдумывает номеров. " +
+  "Правильность по смыслу он не проверяет — для этого ваша оценка 👍/👎.";
+function qualityBadge(q, note) {
+  const cls = q >= 80 ? "good" : q >= 50 ? "mid" : "bad";
+  return `<span class="q-badge ${cls}" title="${escapeHtml(QUALITY_TIP + (note ? "\n\n" + note : ""))}"><span class="q-bar"><span style="width:${q}%"></span></span><span class="q-num">${q}</span></span>`;
+}
+
+// Answers to the same question are also compared with each other: an answer that rests on fewer
+// paragraphs than the best one in the group loses up to 40 points (cited 1 of the best 10 → ×0.64).
+function rateAgainstEachOther(arr) {
+  const qa = arr.filter((x) => x.quality != null);
+  const best = Math.max(0, ...qa.map((x) => x.cited || 0));
+  for (const x of qa) {
+    if (best < 2) { x.quality_rel = x.quality; x.rel_note = ""; continue; }
+    const share = Math.min(1, (x.cited || 0) / best);
+    x.quality_rel = Math.round(x.quality * (0.6 + 0.4 * share));
+    x.rel_note = `Сравнение с другими ответами на этот вопрос: ссылок на абзацы ${x.cited || 0} из ${best} у лучшего` +
+      (x.quality_rel !== x.quality ? ` — индекс снижен с ${x.quality} до ${x.quality_rel}.` : " — это лучший по полноте.");
+  }
+}
+
+// «Группировать по вопросу»: one row per question (same text and kind), its answers unfold below, newest first.
+const openGroups = new Set();
+const groupKey = (e) => e.mode + "|" + (e.query || "").trim().toLowerCase().replace(/\s+/g, " ");
+function renderHistoryGroups(items) {
+  const groups = new Map();
+  for (const e of items) {   // items come newest first, so groups and their answers keep that order
+    const k = groupKey(e);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  }
+  let html = "";
+  for (const [k, arr] of groups) {
+    const e0 = arr[0];
+    if (arr.length === 1) { html += historyRow(e0); continue; }   // a single answer: a plain card
+    rateAgainstEachOther(arr);
+    const models = [...new Set(arr.map((x) => x.llm_model).filter(Boolean))];
+    const qs = arr.map((x) => x.quality_rel ?? x.quality).filter((x) => x != null);
+    const ups = arr.filter((x) => x.rating > 0).length, downs = arr.filter((x) => x.rating < 0).length;
+    const open = openGroups.has(k);
+    const n = arr.length, n10 = n % 10, n100 = n % 100;
+    const word = n10 === 1 && n100 !== 11 ? "ответ" : n10 >= 2 && n10 <= 4 && (n100 < 12 || n100 > 14) ? "ответа" : "ответов";
+    html += `<div class="h-grp${open ? " open" : ""}" data-key="${escapeHtml(k)}" tabindex="0">
+      <div class="h-meta"><span class="h-mode">${MODE_ICON[e0.mode] || ""} <span class="h-count">${n} ${word}</span>` +
+      `${ups ? ` · 👍${ups}` : ""}${downs ? ` · 👎${downs}` : ""}</span><span class="h-time">${fmtStamp(e0.created_at)} ${open ? "▾" : "▸"}</span></div>
+      <div class="h-query" title="${escapeHtml(e0.query)}">${escapeHtml(e0.query)}</div>
+      ${models.length ? `<div class="h-model" title="${escapeHtml(models.join(", "))}">🤖 ${models.length === 1 ? escapeHtml(models[0]) : `моделей: ${models.length}`}` +
+        `${qs.length ? ` · лучший ${qualityBadge(Math.max(...qs))}` : ""}</div>` : ""}
+    </div>`;
+    if (open) html += `<div class="h-grp-items">${arr.map(historyRow).join("")}</div>`;
+  }
+  return html;
+}
+
 function renderHistoryList(items, total) {
   const list = $("#history-list");
   if (!items.length) {
@@ -1604,6 +1705,22 @@ function renderHistoryList(items, total) {
     return;
   }
   let html = "";
+  if ($("#history-sort").value === "group") {
+    html = renderHistoryGroups(items);
+    if (total > items.length) html += `<div class="hint-text h-empty">Учтены последние ${items.length} из ${total}.</div>`;
+    list.innerHTML = html;
+    list.querySelectorAll(".h-grp").forEach((g) => {
+      const toggle = () => {
+        const k = g.dataset.key;
+        if (openGroups.has(k)) openGroups.delete(k); else openGroups.add(k);
+        renderHistoryList(items, total);
+      };
+      g.addEventListener("click", toggle);
+      g.addEventListener("keydown", (ev) => { if (ev.key === "Enter") toggle(); });
+    });
+    bindHistoryRows(list);
+    return;
+  }
   const pinned = items.filter((e) => e.pinned);
   if (pinned.length) html += `<div class="h-group">Закреплённые</div>` + pinned.map(historyRow).join("");
   let last = null;
@@ -1614,6 +1731,10 @@ function renderHistoryList(items, total) {
   }
   if (total > items.length) html += `<div class="hint-text h-empty">Показаны последние ${items.length} из ${total}.</div>`;
   list.innerHTML = html;
+  bindHistoryRows(list);
+}
+
+function bindHistoryRows(list) {
   list.querySelectorAll(".h-row").forEach((row) => {
     const id = Number(row.dataset.id);
     row.addEventListener("click", (ev) => { if (!ev.target.closest(".h-btns")) openHistoryEntry(id); });
@@ -1651,6 +1772,7 @@ async function deleteHistoryEntry(id) {
   try {
     await api(`/api/history/${id}`, { method: "DELETE" });
     if (currentHistoryEntry && currentHistoryEntry.id === id) { currentHistoryEntry = null; updateHistoryNote(); }
+    if (rememberedEntry() === id) rememberEntry(null);
     loadHistory();
     loadRecent();
   } catch (e) { console.error("delete history:", e); alert("Не удалось удалить запись: " + e.message); }
@@ -1669,6 +1791,7 @@ $("#history-clear-yes").addEventListener("click", async () => {
   try {
     const r = await api("/api/history", { method: "DELETE" });
     currentHistoryEntry = null;
+    rememberEntry(null);
     updateHistoryNote();
     loadHistory();
     loadRecent();
@@ -1692,10 +1815,12 @@ function applyEntryToForm(e) {
   }
 }
 
-async function openHistoryEntry(id) {
+async function openHistoryEntry(id, opts = {}) {
   try {
     const e = await api(`/api/history/${id}`);
     currentHistoryEntry = e;
+    rememberEntry(e.id);
+    if (typeof openGroups !== "undefined") openGroups.add(groupKey(e));   // its group in the list is unfolded
     applyEntryToForm(e);
     setLastQuery(e.query);
     $("#status-panel").classList.add("hidden");
@@ -1705,9 +1830,11 @@ async function openHistoryEntry(id) {
     updateHistoryNote();
     renderHistoryExtra(e);
     document.querySelectorAll(".h-row").forEach((r) => r.classList.toggle("active", Number(r.dataset.id) === id));
-    if (window.innerWidth < 1200) closeHistory(false);  // on narrow screens the drawer would cover the result
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    if (window.innerWidth < 1200 && !opts.quiet) closeHistory(false);  // on narrow screens the drawer would cover the result
+    if (!opts.quiet) window.scrollTo({ top: 0, behavior: "smooth" });
+    if (historyOpen) loadHistory();
   } catch (err) {
+    if (opts.quiet) { rememberEntry(null); return; }   // the remembered entry is gone: just start clean
     console.error("open history entry:", err);
     $("#history-note").className = "history-note error";
     $("#history-note").textContent = "Не удалось открыть запись истории: " + err.message;
@@ -1762,6 +1889,11 @@ $("#query-input").addEventListener("keydown", (ev) => {
 // called by runQuery() after a search/question/analysis finished (the server has saved it by then)
 function afterQuery() {
   recentIdx = -1;
+  const asked = ($("#query-input").value || "").trim();
+  api("/api/history?limit=1").then((d) => {
+    const e = d.items && d.items[0];
+    if (e && (e.query || "").trim() === asked) rememberEntry(e.id);
+  }).catch(() => {});
   loadRecent();
   if (historyOpen) loadHistory();
   if (typeof refreshLlmBadge === "function") refreshLlmBadge();   // the model in memory may have changed
@@ -1816,6 +1948,8 @@ document.addEventListener("visibilitychange", saveView);
   } else {
     if (q) $("#query-input").value = q;
     viewReady = true;
+    const last = q ? null : rememberedEntry();
+    if (last) openHistoryEntry(last, { quiet: true });
   }
   autosizeQuery();
 })();

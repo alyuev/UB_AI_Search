@@ -26,7 +26,7 @@ def find_csc() -> Path:
 def build(out: Path) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     cmd = [str(find_csc()), "/nologo", "/target:winexe", "/optimize+", "/platform:anycpu",
-           f"/win32icon:{ICON}", "/r:System.Windows.Forms.dll", f"/out:{out}", str(SRC)]
+           f"/win32icon:{ICON}", "/r:System.Windows.Forms.dll", "/r:System.Drawing.dll", f"/out:{out}", str(SRC)]
     r = subprocess.run(cmd, capture_output=True, text=True, encoding="cp866", errors="replace")
     if r.returncode != 0:
         raise RuntimeError(f"csc failed:\n{r.stdout}\n{r.stderr}")

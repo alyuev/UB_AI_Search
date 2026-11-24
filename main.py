@@ -101,6 +101,21 @@ def _message_box(text: str, title: str = "Bilingual Text Analyzer"):
         print(text, flush=True)
 
 
+def _signal_ready():
+    """Tell SmartSearch.exe that the window is up, so it closes its «запускается…» splash."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        k = ctypes.windll.kernel32
+        h = k.OpenEventW(0x0002, False, r"Local\SmartSearchReady")   # EVENT_MODIFY_STATE
+        if h:
+            k.SetEvent(h)
+            k.CloseHandle(h)
+    except Exception:
+        pass
+
+
 def run_browser_fallback(server, url: str):
     """No WebView2: serve as usual, open the browser, and keep a small dialog as the «quit» button."""
     t = threading.Thread(target=server.run, daemon=True, name="uvicorn")
@@ -112,6 +127,7 @@ def run_browser_fallback(server, url: str):
         return
     if not os.environ.get("SMARTSEARCH_NO_BROWSER"):
         webbrowser.open(url)
+    _signal_ready()
 
     def dialog():
         _message_box("В этой Windows нет компонента Microsoft Edge WebView2, поэтому программа открыта "
@@ -165,6 +181,7 @@ def run_desktop(server, url: str):
 
     threading.Thread(target=watch_server, daemon=True).start()
     window.events.shown += lambda: _set_window_icon(window)
+    window.events.loaded += _signal_ready
     webview.start(private_mode=False, storage_path=os.path.abspath(os.path.join("data", "webview")))
     server.should_exit = True   # window closed by the user
     t.join(timeout=15)
